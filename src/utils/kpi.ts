@@ -71,7 +71,9 @@ export const computeDashboardMetrics = (
   const variableExpense = Math.max(monthlyExpense - fixedExpense, 0);
   const fixedVsVariableRatio = variableExpense > 0 ? fixedExpense / variableExpense : 0;
 
-  const monthlyDebtPayment = debts.reduce((acc, debt) => acc + debt.monthlyPayment, 0);
+  const monthlyDebtPayment = debts
+    .filter((debt) => debt.remainingBalance > 0)
+    .reduce((acc, debt) => acc + debt.monthlyPayment, 0);
   const debtToIncomeRatio = monthlyIncome > 0 ? (monthlyDebtPayment / monthlyIncome) * 100 : 0;
 
   const avgExpenseHistory = (() => {

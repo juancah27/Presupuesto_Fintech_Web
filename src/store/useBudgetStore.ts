@@ -5,9 +5,12 @@ import type {
   Category,
   CurrencyCode,
   Debt,
+  DebtPayment,
   GoalContribution,
   Investment,
   Liability,
+  LoanPayment,
+  LoanRecord,
   MonthlyBudget,
   PageKey,
   SavingsGoal,
@@ -19,13 +22,22 @@ import type {
 import { nowISO } from "../utils/date";
 import { makeId } from "../utils/id";
 import { buildNetWorthHistoryPoint } from "../utils/kpi";
+import { buildDebtHistoryPoint, debtRemainingTotal } from "../utils/debts";
+import { receivableLoansTotal } from "../utils/loans";
 import { createSeedData } from "../utils/seed";
-import { importBackupJson, loadState, saveState } from "../utils/storage";
+import {
+  clearStateForUser,
+  importBackupJson,
+  loadStateForUser,
+  saveStateForUser,
+} from "../utils/storage";
 
 interface BudgetActions {
-  hydrate: () => void;
+  hydrateForUser: (userId: string, currencyHint?: CurrencyCode) => void;
+  clearUserContext: () => void;
   resetWithSeed: () => void;
   importBackup: (json: string) => void;
+  deleteAllMyData: () => void;
   setTheme: (theme: ThemeMode) => void;
   setCurrency: (currency: CurrencyCode) => void;
   setActivePage: (page: PageKey) => void;
@@ -50,9 +62,15 @@ interface BudgetActions {
   addInvestment: (payload: Omit<Investment, "id">) => void;
   updateInvestment: (id: string, payload: Partial<Investment>) => void;
   deleteInvestment: (id: string) => void;
-  addDebt: (payload: Omit<Debt, "id">) => void;
+  addDebt: (payload: Omit<Debt, "id" | "createdAt" | "updatedAt">) => void;
   updateDebt: (id: string, payload: Partial<Debt>) => void;
   deleteDebt: (id: string) => void;
+  addDebtPayment: (payload: Omit<DebtPayment, "id" | "createdAt">) => void;
+  addLoan: (payload: Omit<LoanRecord, "id" | "createdAt" | "updatedAt" | "statusOverride">) => void;
+  updateLoan: (id: string, payload: Partial<LoanRecord>) => void;
+  deleteLoan: (id: string) => void;
+  addLoanPayment: (payload: Omit<LoanPayment, "id" | "createdAt">) => void;
+  markLoanUncollectible: (loanId: string, note: string) => void;
   addAsset: (payload: Omit<Asset, "id">) => void;
   updateAsset: (id: string, payload: Partial<Asset>) => void;
   deleteAsset: (id: string) => void;
@@ -63,14 +81,22 @@ interface BudgetActions {
 
 interface BudgetStore extends AppDataState, BudgetActions {
   isLoading: boolean;
+  currentUserId: string | null;
 }
+
+const totalAssetsWithLoans = (state: Pick<AppDataState, "assets" | "loans" | "loanPayments">): number =>
+  state.assets.reduce((acc, item) => acc + item.value, 0) + receivableLoansTotal(state.loans, state.loanPayments);
+
+const totalLiabilities = (state: Pick<AppDataState, "liabilities" | "debts">): number =>
+  state.liabilities.reduce((acc, item) => acc + item.value, 0) + debtRemainingTotal(state.debts);
 
 const enrichWithNetWorthPoint = (state: AppDataState): AppDataState => ({
   ...state,
+  debtHistory: buildDebtHistoryPoint(state.debtHistory, state.debts),
   netWorthHistory: buildNetWorthHistoryPoint(
     state.netWorthHistory,
-    state.assets.reduce((acc, item) => acc + item.value, 0),
-    state.liabilities.reduce((acc, item) => acc + item.value, 0),
+    totalAssetsWithLoans(state),
+    totalLiabilities(state),
   ),
 });
 
@@ -90,355 +116,614 @@ const getSerializable = (state: BudgetStore): AppDataState => ({
   investments: state.investments,
   investmentSnapshots: state.investmentSnapshots,
   debts: state.debts,
+  debtPayments: state.debtPayments,
+  debtHistory: state.debtHistory,
+  loans: state.loans,
+  loanPayments: state.loanPayments,
   assets: state.assets,
   liabilities: state.liabilities,
   netWorthHistory: state.netWorthHistory,
 });
 
-const initialState = enrichWithNetWorthPoint(loadState());
+const bootstrap = createSeedData();
 
-export const useBudgetStore = create<BudgetStore>((set) => ({
-  ...initialState,
-  isLoading: true,
+export const useBudgetStore = create<BudgetStore>((set) => {
+  const persist = (state: BudgetStore, updates: Partial<AppDataState>) => {
+    if (!state.currentUserId) return;
+    const next = { ...getSerializable(state), ...updates } as AppDataState;
+    saveStateForUser(state.currentUserId, next);
+  };
 
-  hydrate: () => {
-    const loaded = enrichWithNetWorthPoint(loadState());
-    set({ ...loaded, isLoading: false });
-  },
+  return {
+    ...bootstrap,
+    isLoading: true,
+    currentUserId: null,
 
-  resetWithSeed: () => {
-    const seeded = enrichWithNetWorthPoint(createSeedData());
-    saveState(seeded);
-    set({ ...seeded });
-  },
+    hydrateForUser: (userId, currencyHint) => {
+      const loaded = enrichWithNetWorthPoint(loadStateForUser(userId, currencyHint));
+      set({
+        ...loaded,
+        currentUserId: userId,
+        isLoading: false,
+      });
+    },
 
-  importBackup: (json) => {
-    const imported = enrichWithNetWorthPoint(importBackupJson(json));
-    saveState(imported);
-    set({ ...imported });
-  },
+    clearUserContext: () => {
+      set({
+        ...createSeedData(),
+        currentUserId: null,
+        isLoading: false,
+      });
+    },
 
-  setTheme: (theme) =>
-    set((state) => {
-      const next = { ...state, theme };
-      saveState(getSerializable(next));
-      return { theme };
-    }),
+    resetWithSeed: () =>
+      set((state) => {
+        const seeded = enrichWithNetWorthPoint(createSeedData(state.currency));
+        if (state.currentUserId) saveStateForUser(state.currentUserId, seeded);
+        return { ...seeded };
+      }),
 
-  setCurrency: (currency) =>
-    set((state) => {
-      const next = { ...state, currency };
-      saveState(getSerializable(next));
-      return { currency };
-    }),
+    importBackup: (json) =>
+      set((state) => {
+        const imported = enrichWithNetWorthPoint(importBackupJson(json, state.currency));
+        if (state.currentUserId) saveStateForUser(state.currentUserId, imported);
+        return { ...imported };
+      }),
 
-  setActivePage: (activePage) =>
-    set((state) => {
-      const next = { ...state, activePage };
-      saveState(getSerializable(next));
-      return { activePage };
-    }),
+    deleteAllMyData: () =>
+      set((state) => {
+        if (state.currentUserId) {
+          clearStateForUser(state.currentUserId);
+          const seeded = enrichWithNetWorthPoint(createSeedData(state.currency));
+          saveStateForUser(state.currentUserId, seeded);
+          return { ...seeded };
+        }
+        return {};
+      }),
 
-  toggleSidebar: () =>
-    set((state) => {
-      const sidebarCollapsed = !state.sidebarCollapsed;
-      const next = { ...state, sidebarCollapsed };
-      saveState(getSerializable(next));
-      return { sidebarCollapsed };
-    }),
+    setTheme: (theme) =>
+      set((state) => {
+        persist(state, { theme });
+        return { theme };
+      }),
 
-  addTransaction: (payload) =>
-    set((state) => {
-      const tx: Transaction = {
-        ...payload,
-        id: makeId("tx"),
-        createdAt: nowISO(),
-        updatedAt: nowISO(),
-      };
-      const next = { ...state, transactions: [tx, ...state.transactions] };
-      saveState(getSerializable(next));
-      return { transactions: next.transactions };
-    }),
+    setCurrency: (currency) =>
+      set((state) => {
+        persist(state, { currency });
+        return { currency };
+      }),
 
-  updateTransaction: (id, payload) =>
-    set((state) => {
-      const transactions = state.transactions.map((item) =>
-        item.id === id ? { ...item, ...payload, updatedAt: nowISO() } : item,
-      );
-      const next = { ...state, transactions };
-      saveState(getSerializable(next));
-      return { transactions };
-    }),
+    setActivePage: (activePage) =>
+      set((state) => {
+        persist(state, { activePage });
+        return { activePage };
+      }),
 
-  deleteTransaction: (id) =>
-    set((state) => {
-      const transactions = state.transactions.filter((item) => item.id !== id);
-      const next = { ...state, transactions };
-      saveState(getSerializable(next));
-      return { transactions };
-    }),
+    toggleSidebar: () =>
+      set((state) => {
+        const sidebarCollapsed = !state.sidebarCollapsed;
+        persist(state, { sidebarCollapsed });
+        return { sidebarCollapsed };
+      }),
 
-  addBudget: (payload) =>
-    set((state) => {
-      const existing = state.budgets.find(
-        (item) => item.month === payload.month && item.categoryId === payload.categoryId,
-      );
-      const budgets = existing
-        ? state.budgets.map((item) => (item.id === existing.id ? { ...item, limit: payload.limit } : item))
-        : [{ id: makeId("budget"), ...payload }, ...state.budgets];
-      const next = { ...state, budgets };
-      saveState(getSerializable(next));
-      return { budgets };
-    }),
+    addTransaction: (payload) =>
+      set((state) => {
+        const tx: Transaction = {
+          ...payload,
+          id: makeId("tx"),
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        };
+        const transactions = [tx, ...state.transactions];
+        persist(state, { transactions });
+        return { transactions };
+      }),
 
-  deleteBudget: (id) =>
-    set((state) => {
-      const budgets = state.budgets.filter((item) => item.id !== id);
-      const next = { ...state, budgets };
-      saveState(getSerializable(next));
-      return { budgets };
-    }),
+    updateTransaction: (id, payload) =>
+      set((state) => {
+        const transactions = state.transactions.map((item) =>
+          item.id === id ? { ...item, ...payload, updatedAt: nowISO() } : item,
+        );
+        persist(state, { transactions });
+        return { transactions };
+      }),
 
-  addCategory: (payload) =>
-    set((state) => {
-      const categories = [{ id: makeId("cat"), ...payload }, ...state.categories];
-      const next = { ...state, categories };
-      saveState(getSerializable(next));
-      return { categories };
-    }),
+    deleteTransaction: (id) =>
+      set((state) => {
+        const transactions = state.transactions.filter((item) => item.id !== id);
+        persist(state, { transactions });
+        return { transactions };
+      }),
 
-  updateCategory: (id, payload) =>
-    set((state) => {
-      const categories = state.categories.map((item) => (item.id === id ? { ...item, ...payload } : item));
-      const next = { ...state, categories };
-      saveState(getSerializable(next));
-      return { categories };
-    }),
+    addBudget: (payload) =>
+      set((state) => {
+        const existing = state.budgets.find(
+          (item) => item.month === payload.month && item.categoryId === payload.categoryId,
+        );
+        const budgets = existing
+          ? state.budgets.map((item) =>
+              item.id === existing.id ? { ...item, limit: payload.limit } : item,
+            )
+          : [{ id: makeId("budget"), ...payload }, ...state.budgets];
+        persist(state, { budgets });
+        return { budgets };
+      }),
 
-  deleteCategory: (id) =>
-    set((state) => {
-      const categories = state.categories.filter((item) => item.id !== id);
-      const subcategories = state.subcategories.filter((item) => item.categoryId !== id);
-      const next = { ...state, categories, subcategories };
-      saveState(getSerializable(next));
-      return { categories, subcategories };
-    }),
+    deleteBudget: (id) =>
+      set((state) => {
+        const budgets = state.budgets.filter((item) => item.id !== id);
+        persist(state, { budgets });
+        return { budgets };
+      }),
 
-  addSubcategory: (payload) =>
-    set((state) => {
-      const subcategories = [{ id: makeId("sub"), ...payload }, ...state.subcategories];
-      const next = { ...state, subcategories };
-      saveState(getSerializable(next));
-      return { subcategories };
-    }),
+    addCategory: (payload) =>
+      set((state) => {
+        const categories = [{ id: makeId("cat"), ...payload }, ...state.categories];
+        persist(state, { categories });
+        return { categories };
+      }),
 
-  updateSubcategory: (id, payload) =>
-    set((state) => {
-      const subcategories = state.subcategories.map((item) => (item.id === id ? { ...item, ...payload } : item));
-      const next = { ...state, subcategories };
-      saveState(getSerializable(next));
-      return { subcategories };
-    }),
+    updateCategory: (id, payload) =>
+      set((state) => {
+        const categories = state.categories.map((item) =>
+          item.id === id ? { ...item, ...payload } : item,
+        );
+        persist(state, { categories });
+        return { categories };
+      }),
 
-  deleteSubcategory: (id) =>
-    set((state) => {
-      const subcategories = state.subcategories.filter((item) => item.id !== id);
-      const next = { ...state, subcategories };
-      saveState(getSerializable(next));
-      return { subcategories };
-    }),
+    deleteCategory: (id) =>
+      set((state) => {
+        const categories = state.categories.filter((item) => item.id !== id);
+        const subcategories = state.subcategories.filter((item) => item.categoryId !== id);
+        persist(state, { categories, subcategories });
+        return { categories, subcategories };
+      }),
 
-  addSource: (payload) =>
-    set((state) => {
-      const sources = [{ id: makeId("src"), ...payload }, ...state.sources];
-      const next = { ...state, sources };
-      saveState(getSerializable(next));
-      return { sources };
-    }),
+    addSubcategory: (payload) =>
+      set((state) => {
+        const subcategories = [{ id: makeId("sub"), ...payload }, ...state.subcategories];
+        persist(state, { subcategories });
+        return { subcategories };
+      }),
 
-  updateSource: (id, payload) =>
-    set((state) => {
-      const sources = state.sources.map((item) => (item.id === id ? { ...item, ...payload } : item));
-      const next = { ...state, sources };
-      saveState(getSerializable(next));
-      return { sources };
-    }),
+    updateSubcategory: (id, payload) =>
+      set((state) => {
+        const subcategories = state.subcategories.map((item) =>
+          item.id === id ? { ...item, ...payload } : item,
+        );
+        persist(state, { subcategories });
+        return { subcategories };
+      }),
 
-  deleteSource: (id) =>
-    set((state) => {
-      const sources = state.sources.filter((item) => item.id !== id);
-      const next = { ...state, sources };
-      saveState(getSerializable(next));
-      return { sources };
-    }),
+    deleteSubcategory: (id) =>
+      set((state) => {
+        const subcategories = state.subcategories.filter((item) => item.id !== id);
+        persist(state, { subcategories });
+        return { subcategories };
+      }),
 
-  addGoal: (payload) =>
-    set((state) => {
-      const goals = [{ id: makeId("goal"), createdAt: nowISO(), ...payload }, ...state.goals];
-      const next = { ...state, goals };
-      saveState(getSerializable(next));
-      return { goals };
-    }),
+    addSource: (payload) =>
+      set((state) => {
+        const sources = [{ id: makeId("src"), ...payload }, ...state.sources];
+        persist(state, { sources });
+        return { sources };
+      }),
 
-  deleteGoal: (id) =>
-    set((state) => {
-      const goals = state.goals.filter((item) => item.id !== id);
-      const goalContributions = state.goalContributions.filter((item) => item.goalId !== id);
-      const next = { ...state, goals, goalContributions };
-      saveState(getSerializable(next));
-      return { goals, goalContributions };
-    }),
+    updateSource: (id, payload) =>
+      set((state) => {
+        const sources = state.sources.map((item) => (item.id === id ? { ...item, ...payload } : item));
+        persist(state, { sources });
+        return { sources };
+      }),
 
-  addGoalContribution: (payload) =>
-    set((state) => {
-      const goalContributions = [{ ...payload, id: makeId("contrib") }, ...state.goalContributions];
-      const next = { ...state, goalContributions };
-      saveState(getSerializable(next));
-      return { goalContributions };
-    }),
+    deleteSource: (id) =>
+      set((state) => {
+        const sources = state.sources.filter((item) => item.id !== id);
+        persist(state, { sources });
+        return { sources };
+      }),
 
-  addInvestment: (payload) =>
-    set((state) => {
-      const investment: Investment = { id: makeId("inv"), ...payload };
-      const investments = [investment, ...state.investments];
-      const investmentSnapshots = [
-        {
-          id: makeId("snap"),
-          investmentId: investment.id,
-          date: payload.startDate,
-          value: payload.currentValue,
-        },
-        ...state.investmentSnapshots,
-      ];
-      const next = { ...state, investments, investmentSnapshots };
-      saveState(getSerializable(next));
-      return { investments, investmentSnapshots };
-    }),
+    addGoal: (payload) =>
+      set((state) => {
+        const goals = [{ id: makeId("goal"), createdAt: nowISO(), ...payload }, ...state.goals];
+        persist(state, { goals });
+        return { goals };
+      }),
 
-  updateInvestment: (id, payload) =>
-    set((state) => {
-      const current = state.investments.find((item) => item.id === id);
-      const investments = state.investments.map((item) => (item.id === id ? { ...item, ...payload } : item));
-      let investmentSnapshots = state.investmentSnapshots;
-      if (current && payload.currentValue !== undefined && payload.currentValue !== current.currentValue) {
-        investmentSnapshots = [
-          { id: makeId("snap"), investmentId: id, date: nowISO().slice(0, 10), value: payload.currentValue },
+    deleteGoal: (id) =>
+      set((state) => {
+        const goals = state.goals.filter((item) => item.id !== id);
+        const goalContributions = state.goalContributions.filter((item) => item.goalId !== id);
+        persist(state, { goals, goalContributions });
+        return { goals, goalContributions };
+      }),
+
+    addGoalContribution: (payload) =>
+      set((state) => {
+        const goalContributions = [{ ...payload, id: makeId("contrib") }, ...state.goalContributions];
+        persist(state, { goalContributions });
+        return { goalContributions };
+      }),
+
+    addInvestment: (payload) =>
+      set((state) => {
+        const investment: Investment = { id: makeId("inv"), ...payload };
+        const investments = [investment, ...state.investments];
+        const investmentSnapshots = [
+          {
+            id: makeId("snap"),
+            investmentId: investment.id,
+            date: payload.startDate,
+            value: payload.currentValue,
+          },
           ...state.investmentSnapshots,
         ];
-      }
-      const next = { ...state, investments, investmentSnapshots };
-      saveState(getSerializable(next));
-      return { investments, investmentSnapshots };
-    }),
+        persist(state, { investments, investmentSnapshots });
+        return { investments, investmentSnapshots };
+      }),
 
-  deleteInvestment: (id) =>
-    set((state) => {
-      const investments = state.investments.filter((item) => item.id !== id);
-      const investmentSnapshots = state.investmentSnapshots.filter((item) => item.investmentId !== id);
-      const next = { ...state, investments, investmentSnapshots };
-      saveState(getSerializable(next));
-      return { investments, investmentSnapshots };
-    }),
+    updateInvestment: (id, payload) =>
+      set((state) => {
+        const current = state.investments.find((item) => item.id === id);
+        const investments = state.investments.map((item) =>
+          item.id === id ? { ...item, ...payload } : item,
+        );
+        let investmentSnapshots = state.investmentSnapshots;
+        if (current && payload.currentValue !== undefined && payload.currentValue !== current.currentValue) {
+          investmentSnapshots = [
+            {
+              id: makeId("snap"),
+              investmentId: id,
+              date: nowISO().slice(0, 10),
+              value: payload.currentValue,
+            },
+            ...state.investmentSnapshots,
+          ];
+        }
+        persist(state, { investments, investmentSnapshots });
+        return { investments, investmentSnapshots };
+      }),
 
-  addDebt: (payload) =>
-    set((state) => {
-      const debts = [{ id: makeId("debt"), ...payload }, ...state.debts];
-      const next = { ...state, debts };
-      saveState(getSerializable(next));
-      return { debts };
-    }),
+    deleteInvestment: (id) =>
+      set((state) => {
+        const investments = state.investments.filter((item) => item.id !== id);
+        const investmentSnapshots = state.investmentSnapshots.filter(
+          (item) => item.investmentId !== id,
+        );
+        persist(state, { investments, investmentSnapshots });
+        return { investments, investmentSnapshots };
+      }),
 
-  updateDebt: (id, payload) =>
-    set((state) => {
-      const debts = state.debts.map((item) => (item.id === id ? { ...item, ...payload } : item));
-      const next = { ...state, debts };
-      saveState(getSerializable(next));
-      return { debts };
-    }),
+    addDebt: (payload) =>
+      set((state) => {
+        const debt: Debt = {
+          ...payload,
+          id: makeId("debt"),
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+          annualInterestRate: payload.annualInterestRate ?? payload.interestRate,
+          interestRate: payload.interestRate ?? payload.annualInterestRate,
+        };
+        const debts = [debt, ...state.debts];
+        const debtHistory = buildDebtHistoryPoint(state.debtHistory, debts);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans(state),
+          totalLiabilities({ ...state, debts }),
+        );
+        persist(state, { debts, debtHistory, netWorthHistory });
+        return { debts, debtHistory, netWorthHistory };
+      }),
 
-  deleteDebt: (id) =>
-    set((state) => {
-      const debts = state.debts.filter((item) => item.id !== id);
-      const next = { ...state, debts };
-      saveState(getSerializable(next));
-      return { debts };
-    }),
+    updateDebt: (id, payload) =>
+      set((state) => {
+        const debts = state.debts.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                ...payload,
+                interestRate: payload.interestRate ?? payload.annualInterestRate ?? item.interestRate,
+                annualInterestRate:
+                  payload.annualInterestRate ?? payload.interestRate ?? item.annualInterestRate,
+                updatedAt: nowISO(),
+              }
+            : item,
+        );
+        const debtHistory = buildDebtHistoryPoint(state.debtHistory, debts);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans(state),
+          totalLiabilities({ ...state, debts }),
+        );
+        persist(state, { debts, debtHistory, netWorthHistory });
+        return { debts, debtHistory, netWorthHistory };
+      }),
 
-  addAsset: (payload) =>
-    set((state) => {
-      const assets = [{ id: makeId("asset"), ...payload }, ...state.assets];
-      const netWorthHistory = buildNetWorthHistoryPoint(
-        state.netWorthHistory,
-        assets.reduce((acc, item) => acc + item.value, 0),
-        state.liabilities.reduce((acc, item) => acc + item.value, 0),
-      );
-      const next = { ...state, assets, netWorthHistory };
-      saveState(getSerializable(next));
-      return { assets, netWorthHistory };
-    }),
+    deleteDebt: (id) =>
+      set((state) => {
+        const debts = state.debts.filter((item) => item.id !== id);
+        const debtPayments = state.debtPayments.filter((item) => item.debtId !== id);
+        const debtHistory = buildDebtHistoryPoint(state.debtHistory, debts);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans(state),
+          totalLiabilities({ ...state, debts }),
+        );
+        persist(state, { debts, debtPayments, debtHistory, netWorthHistory });
+        return { debts, debtPayments, debtHistory, netWorthHistory };
+      }),
 
-  updateAsset: (id, payload) =>
-    set((state) => {
-      const assets = state.assets.map((item) => (item.id === id ? { ...item, ...payload } : item));
-      const netWorthHistory = buildNetWorthHistoryPoint(
-        state.netWorthHistory,
-        assets.reduce((acc, item) => acc + item.value, 0),
-        state.liabilities.reduce((acc, item) => acc + item.value, 0),
-      );
-      const next = { ...state, assets, netWorthHistory };
-      saveState(getSerializable(next));
-      return { assets, netWorthHistory };
-    }),
+    addDebtPayment: (payload) =>
+      set((state) => {
+        const debt = state.debts.find((item) => item.id === payload.debtId);
+        if (!debt) return {};
 
-  deleteAsset: (id) =>
-    set((state) => {
-      const assets = state.assets.filter((item) => item.id !== id);
-      const netWorthHistory = buildNetWorthHistoryPoint(
-        state.netWorthHistory,
-        assets.reduce((acc, item) => acc + item.value, 0),
-        state.liabilities.reduce((acc, item) => acc + item.value, 0),
-      );
-      const next = { ...state, assets, netWorthHistory };
-      saveState(getSerializable(next));
-      return { assets, netWorthHistory };
-    }),
+        const amount = Math.max(0, payload.amount);
+        if (amount <= 0) return {};
 
-  addLiability: (payload) =>
-    set((state) => {
-      const liabilities = [{ id: makeId("liab"), ...payload }, ...state.liabilities];
-      const netWorthHistory = buildNetWorthHistoryPoint(
-        state.netWorthHistory,
-        state.assets.reduce((acc, item) => acc + item.value, 0),
-        liabilities.reduce((acc, item) => acc + item.value, 0),
-      );
-      const next = { ...state, liabilities, netWorthHistory };
-      saveState(getSerializable(next));
-      return { liabilities, netWorthHistory };
-    }),
+        const debtPayment: DebtPayment = {
+          ...payload,
+          amount,
+          id: makeId("debtpay"),
+          createdAt: nowISO(),
+        };
 
-  updateLiability: (id, payload) =>
-    set((state) => {
-      const liabilities = state.liabilities.map((item) => (item.id === id ? { ...item, ...payload } : item));
-      const netWorthHistory = buildNetWorthHistoryPoint(
-        state.netWorthHistory,
-        state.assets.reduce((acc, item) => acc + item.value, 0),
-        liabilities.reduce((acc, item) => acc + item.value, 0),
-      );
-      const next = { ...state, liabilities, netWorthHistory };
-      saveState(getSerializable(next));
-      return { liabilities, netWorthHistory };
-    }),
+        const debtPayments = [debtPayment, ...state.debtPayments];
+        const debts = state.debts.map((item) =>
+          item.id === payload.debtId
+            ? {
+                ...item,
+                remainingBalance: Math.max(0, item.remainingBalance - amount),
+                updatedAt: nowISO(),
+              }
+            : item,
+        );
 
-  deleteLiability: (id) =>
-    set((state) => {
-      const liabilities = state.liabilities.filter((item) => item.id !== id);
-      const netWorthHistory = buildNetWorthHistoryPoint(
-        state.netWorthHistory,
-        state.assets.reduce((acc, item) => acc + item.value, 0),
-        liabilities.reduce((acc, item) => acc + item.value, 0),
-      );
-      const next = { ...state, liabilities, netWorthHistory };
-      saveState(getSerializable(next));
-      return { liabilities, netWorthHistory };
-    }),
-}));
+        let categories = state.categories;
+        let debtCategory = categories.find((item) => item.name.toLowerCase() === "pago de deuda");
+        if (!debtCategory) {
+          debtCategory = {
+            id: makeId("cat"),
+            name: "Pago de deuda",
+            icon: "DEBT",
+            color: "#ef4444",
+            kind: "fixed",
+            ruleBucket: "needs",
+          };
+          categories = [debtCategory, ...categories];
+        }
+
+        let sources = state.sources;
+        let debtSource = sources.find(
+          (item) => item.type === "expense" && item.name.toLowerCase() === "pago de deuda",
+        );
+        if (!debtSource) {
+          debtSource = {
+            id: makeId("src"),
+            type: "expense",
+            name: "Pago de deuda",
+          };
+          sources = [debtSource, ...sources];
+        }
+
+        const paymentTx: Transaction = {
+          id: makeId("tx"),
+          amount,
+          type: "expense",
+          categoryId: debtCategory.id,
+          sourceId: debtSource.id,
+          date: payload.date,
+          description: `Pago deuda - ${debt.creditor}`,
+          motive: payload.isExtra ? "Pago extra de deuda" : "Pago de deuda",
+          tags: ["deuda", payload.isExtra ? "extra" : "cuota"],
+          isRecurring: false,
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        };
+        const transactions = [paymentTx, ...state.transactions];
+
+        const debtHistory = buildDebtHistoryPoint(state.debtHistory, debts);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans(state),
+          totalLiabilities({ ...state, debts }),
+        );
+        persist(state, { debtPayments, debts, categories, sources, transactions, debtHistory, netWorthHistory });
+        return { debtPayments, debts, categories, sources, transactions, debtHistory, netWorthHistory };
+      }),
+
+    addLoan: (payload) =>
+      set((state) => {
+        const loan: LoanRecord = {
+          ...payload,
+          id: makeId("loan"),
+          statusOverride: null,
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        };
+        const loans = [loan, ...state.loans];
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, loans }),
+          totalLiabilities(state),
+        );
+        persist(state, { loans, netWorthHistory });
+        return { loans, netWorthHistory };
+      }),
+
+    updateLoan: (id, payload) =>
+      set((state) => {
+        const loans = state.loans.map((item) =>
+          item.id === id ? { ...item, ...payload, updatedAt: nowISO() } : item,
+        );
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, loans }),
+          totalLiabilities(state),
+        );
+        persist(state, { loans, netWorthHistory });
+        return { loans, netWorthHistory };
+      }),
+
+    deleteLoan: (id) =>
+      set((state) => {
+        const loans = state.loans.filter((item) => item.id !== id);
+        const loanPayments = state.loanPayments.filter((item) => item.loanId !== id);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, loans, loanPayments }),
+          totalLiabilities(state),
+        );
+        persist(state, { loans, loanPayments, netWorthHistory });
+        return { loans, loanPayments, netWorthHistory };
+      }),
+
+    addLoanPayment: (payload) =>
+      set((state) => {
+        const loan = state.loans.find((item) => item.id === payload.loanId);
+        if (!loan) return {};
+
+        const payment: LoanPayment = {
+          ...payload,
+          id: makeId("loanpay"),
+          createdAt: nowISO(),
+        };
+        const loanPayments = [payment, ...state.loanPayments];
+        const loans = state.loans.map((item) =>
+          item.id === payload.loanId ? { ...item, updatedAt: nowISO() } : item,
+        );
+
+        let sources = state.sources;
+        let recoverySource = sources.find(
+          (item) => item.type === "income" && item.name.toLowerCase() === "recuperacion de prestamo",
+        );
+        if (!recoverySource) {
+          recoverySource = {
+            id: makeId("src"),
+            type: "income",
+            name: "Recuperacion de prestamo",
+          };
+          sources = [recoverySource, ...sources];
+        }
+
+        const recoveryTx: Transaction = {
+          id: makeId("tx"),
+          amount: payload.amount,
+          type: "income",
+          sourceId: recoverySource.id,
+          date: payload.date,
+          description: `Abono de prestamo - ${loan.personName}`,
+          motive: "Recuperacion de prestamo",
+          tags: ["prestamo", "abono"],
+          isRecurring: false,
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        };
+        const transactions = [recoveryTx, ...state.transactions];
+
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, loans, loanPayments }),
+          totalLiabilities(state),
+        );
+        persist(state, { loanPayments, loans, sources, transactions, netWorthHistory });
+        return { loanPayments, loans, sources, transactions, netWorthHistory };
+      }),
+
+    markLoanUncollectible: (loanId, note) =>
+      set((state) => {
+        const loans = state.loans.map((item) =>
+          item.id === loanId
+            ? {
+                ...item,
+                statusOverride: "uncollectible" as const,
+                uncollectibleNote: note.trim() || "Marcado manualmente como incobrable.",
+                updatedAt: nowISO(),
+              }
+            : item,
+        );
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, loans }),
+          totalLiabilities(state),
+        );
+        persist(state, { loans, netWorthHistory });
+        return { loans, netWorthHistory };
+      }),
+
+    addAsset: (payload) =>
+      set((state) => {
+        const assets = [{ id: makeId("asset"), ...payload }, ...state.assets];
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, assets }),
+          totalLiabilities(state),
+        );
+        persist(state, { assets, netWorthHistory });
+        return { assets, netWorthHistory };
+      }),
+
+    updateAsset: (id, payload) =>
+      set((state) => {
+        const assets = state.assets.map((item) => (item.id === id ? { ...item, ...payload } : item));
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, assets }),
+          totalLiabilities(state),
+        );
+        persist(state, { assets, netWorthHistory });
+        return { assets, netWorthHistory };
+      }),
+
+    deleteAsset: (id) =>
+      set((state) => {
+        const assets = state.assets.filter((item) => item.id !== id);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, assets }),
+          totalLiabilities(state),
+        );
+        persist(state, { assets, netWorthHistory });
+        return { assets, netWorthHistory };
+      }),
+
+    addLiability: (payload) =>
+      set((state) => {
+        const liabilities = [{ id: makeId("liab"), ...payload }, ...state.liabilities];
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans(state),
+          totalLiabilities({ ...state, liabilities }),
+        );
+        persist(state, { liabilities, netWorthHistory });
+        return { liabilities, netWorthHistory };
+      }),
+
+    updateLiability: (id, payload) =>
+      set((state) => {
+        const liabilities = state.liabilities.map((item) =>
+          item.id === id ? { ...item, ...payload } : item,
+        );
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans(state),
+          totalLiabilities({ ...state, liabilities }),
+        );
+        persist(state, { liabilities, netWorthHistory });
+        return { liabilities, netWorthHistory };
+      }),
+
+    deleteLiability: (id) =>
+      set((state) => {
+        const liabilities = state.liabilities.filter((item) => item.id !== id);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans(state),
+          totalLiabilities({ ...state, liabilities }),
+        );
+        persist(state, { liabilities, netWorthHistory });
+        return { liabilities, netWorthHistory };
+      }),
+  };
+});

@@ -3,7 +3,11 @@ import type {
   Asset,
   Category,
   Debt,
+  DebtHistoryPoint,
+  DebtPayment,
   GoalContribution,
+  LoanPayment,
+  LoanRecord,
   Investment,
   InvestmentSnapshot,
   Liability,
@@ -12,6 +16,7 @@ import type {
   Source,
   Subcategory,
   Transaction,
+  CurrencyCode,
 } from "../types";
 import { makeId } from "./id";
 import { getCurrentMonthKey, nowISO, todayISO } from "./date";
@@ -155,11 +160,112 @@ const debts: Debt[] = [
   {
     id: makeId("debt"),
     creditor: "Banco Local",
+    debtType: "personal_loan",
     originalAmount: 12000,
     remainingBalance: 7800,
+    hasInterest: true,
     interestRate: 18,
+    annualInterestRate: 18,
     monthlyPayment: 420,
+    dueDayOfMonth: 12,
+    isKnownPerson: false,
+    priority: "high",
+    color: "#ef4444",
+    icon: "BANK",
+    notes: "Prestamo personal para remodelacion",
+    startDate: `${new Date().getFullYear() - 1}-09-01`,
     endDate: `${new Date().getFullYear() + 2}-08-01`,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  },
+  {
+    id: makeId("debt"),
+    creditor: "Laura Diaz",
+    debtType: "family_friend",
+    originalAmount: 1800,
+    remainingBalance: 900,
+    hasInterest: false,
+    interestRate: 0,
+    annualInterestRate: 0,
+    monthlyPayment: 150,
+    dueDayOfMonth: 20,
+    isKnownPerson: true,
+    knownPersonName: "Laura Diaz",
+    knownPersonRelation: "friend",
+    priority: "medium",
+    color: "#f59e0b",
+    icon: "FRIEND",
+    notes: "Prestamo sin interes",
+    startDate: `${new Date().getFullYear()}-01-05`,
+    endDate: `${new Date().getFullYear()}-12-20`,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  },
+];
+
+const debtPayments: DebtPayment[] = [
+  {
+    id: makeId("debtpay"),
+    debtId: debts[0].id,
+    amount: 420,
+    date: currentDate,
+    method: "transfer",
+    note: "Pago mensual",
+    isExtra: false,
+    createdAt: nowISO(),
+  },
+];
+
+const debtHistory: DebtHistoryPoint[] = [
+  {
+    id: makeId("deh"),
+    month,
+    totalRemaining: debts.reduce((acc, item) => acc + item.remainingBalance, 0),
+  },
+];
+
+const loans: LoanRecord[] = [
+  {
+    id: makeId("loan"),
+    personName: "Carlos Mendez",
+    relation: "friend",
+    principalAmount: 450,
+    lentDate: currentDate,
+    dueDate: `${new Date().getFullYear()}-${String(Math.min(new Date().getMonth() + 2, 12)).padStart(2, "0")}-15`,
+    hasInterest: false,
+    lendingMethod: "transfer",
+    notes: "Prestamo personal",
+    receipt: "Transferencia bancaria",
+    statusOverride: null,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  },
+  {
+    id: makeId("loan"),
+    personName: "Ana Rojas",
+    relation: "family",
+    principalAmount: 600,
+    lentDate: `${new Date().getFullYear()}-01-10`,
+    dueDate: `${new Date().getFullYear()}-03-01`,
+    hasInterest: false,
+    lendingMethod: "cash",
+    notes: "Apoyo emergencia",
+    receipt: "",
+    statusOverride: null,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  },
+];
+
+const loanPayments: LoanPayment[] = [
+  {
+    id: makeId("loanpay"),
+    loanId: loans[1].id,
+    amount: 220,
+    date: currentDate,
+    method: "transfer",
+    note: "Primer abono",
+    createdAt: nowISO(),
   },
 ];
 
@@ -173,10 +279,10 @@ const liabilities: Liability[] = [
   { id: makeId("liab"), name: "Prestamo personal", type: "loan", value: 7800 },
 ];
 
-export const createSeedData = (): AppDataState => ({
+export const createSeedData = (currency: CurrencyCode = "PEN"): AppDataState => ({
   version: APP_VERSION,
   theme: "dark",
-  currency: "PEN",
+  currency,
   activePage: "dashboard",
   sidebarCollapsed: false,
   categories,
@@ -189,6 +295,10 @@ export const createSeedData = (): AppDataState => ({
   investments,
   investmentSnapshots,
   debts,
+  debtPayments,
+  debtHistory,
+  loans,
+  loanPayments,
   assets,
   liabilities,
   netWorthHistory: [],

@@ -20,7 +20,7 @@ import { NetWorthChart } from "../components/charts/NetWorthChart";
 
 export const ReportsPage = () => {
   const store = useBudgetStore();
-  const { currency, transactions, categories, sources, netWorthHistory } = store;
+  const { currency, transactions, categories, sources, netWorthHistory, debtHistory } = store;
 
   const monthKey = getCurrentMonthKey();
   const year = Number(monthKey.slice(0, 4));
@@ -113,6 +113,20 @@ export const ReportsPage = () => {
               <YAxis />
               <Tooltip />
               <Line dataKey="saving" stroke="#3b82f6" strokeWidth={3} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card title="Evolucion de Deudas">
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={debtHistory}>
+              <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
+              <XAxis dataKey="month" />
+              <YAxis />
+              <Tooltip />
+              <Line dataKey="totalRemaining" stroke="#ef4444" strokeWidth={3} />
             </LineChart>
           </ResponsiveContainer>
         </div>

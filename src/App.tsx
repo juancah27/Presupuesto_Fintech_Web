@@ -1,27 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { Card } from "./components/ui/Card";
 import { Skeleton } from "./components/ui/Skeleton";
-import { useBudgetStore } from "./store/useBudgetStore";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CategoriesSourcesPage } from "./pages/CategoriesSourcesPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DebtsPage } from "./pages/DebtsPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { GoalsPage } from "./pages/GoalsPage";
 import { InvestmentsPage } from "./pages/InvestmentsPage";
+import { LoginPage } from "./pages/LoginPage";
+import { LoansPage } from "./pages/LoansPage";
 import { NetWorthPage } from "./pages/NetWorthPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
+import { ProfilePage } from "./pages/ProfilePage";
+import { RegisterPage } from "./pages/RegisterPage";
 import { ReportsPage } from "./pages/ReportsPage";
-import { SettingsPage } from "./pages/SettingsPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
-import { AuthPage } from "./pages/AuthPage";
-import {
-  createAuthConfig,
-  hasActiveSession,
-  loadAuthConfig,
-  saveAuthConfig,
-  setActiveSession,
-  verifyCredentials,
-} from "./utils/auth";
+import { useAuthStore } from "./store/useAuthStore";
+import { useBudgetStore } from "./store/useBudgetStore";
+import { PAGE_ITEMS } from "./utils/constants";
 
 const LoadingView = () => (
   <div className="min-h-screen bg-slate-950 p-6">
@@ -37,114 +36,181 @@ const LoadingView = () => (
   </div>
 );
 
-export default function App() {
-  const store = useBudgetStore();
-  const {
-    activePage,
-    theme,
-    currency,
-    sidebarCollapsed,
-    isLoading,
-    setTheme,
-    setCurrency,
-    setActivePage,
-    toggleSidebar,
-  } = store;
-  const [authReady, setAuthReady] = useState(false);
-  const [hasConfig, setHasConfig] = useState(false);
-  const [authenticated, setAuthenticated] = useState(false);
+const resolveProtectedPath = (onboardingCompleted: boolean) =>
+  onboardingCompleted ? "/app/dashboard" : "/onboarding";
+
+const useSessionBoot = () => {
+  const isHydrated = useAuthStore((state) => state.isHydrated);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const currentUser = useAuthStore((state) => state.currentUser);
+  const hydrateAuth = useAuthStore((state) => state.hydrateAuth);
+  const hydrateForUser = useBudgetStore((state) => state.hydrateForUser);
+  const clearUserContext = useBudgetStore((state) => state.clearUserContext);
 
   useEffect(() => {
-    useBudgetStore.getState().hydrate();
-  }, []);
+    hydrateAuth();
+  }, [hydrateAuth]);
 
   useEffect(() => {
-    const config = loadAuthConfig();
-    setHasConfig(Boolean(config));
-    setAuthenticated(Boolean(config) && hasActiveSession());
-    setAuthReady(true);
-  }, []);
+    if (!isHydrated) return;
+    if (isAuthenticated && currentUser) {
+      hydrateForUser(currentUser.id, currentUser.currency);
+      return;
+    }
+    clearUserContext();
+  }, [
+    isHydrated,
+    isAuthenticated,
+    currentUser?.id,
+    currentUser?.currency,
+    hydrateForUser,
+    clearUserContext,
+  ]);
+};
+
+const PublicRoute = ({ children }: { children: JSX.Element }) => {
+  const isHydrated = useAuthStore((state) => state.isHydrated);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const currentUser = useAuthStore((state) => state.currentUser);
+
+  if (!isHydrated) return <LoadingView />;
+  if (isAuthenticated && currentUser) {
+    return <Navigate to={resolveProtectedPath(currentUser.onboardingCompleted)} replace />;
+  }
+  return children;
+};
+
+const ProtectedOnboardingRoute = () => {
+  const isHydrated = useAuthStore((state) => state.isHydrated);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const currentUser = useAuthStore((state) => state.currentUser);
+
+  if (!isHydrated) return <LoadingView />;
+  if (!isAuthenticated || !currentUser) return <Navigate to="/login" replace />;
+  if (currentUser.onboardingCompleted) return <Navigate to="/app/dashboard" replace />;
+  return <OnboardingPage />;
+};
+
+const ProtectedAppShell = () => {
+  const location = useLocation();
+  const isHydrated = useAuthStore((state) => state.isHydrated);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const currentUser = useAuthStore((state) => state.currentUser);
+  const logout = useAuthStore((state) => state.logout);
+  const budgetLoading = useBudgetStore((state) => state.isLoading);
+  const activePage = useBudgetStore((state) => state.activePage);
+  const collapsed = useBudgetStore((state) => state.sidebarCollapsed);
+  const currency = useBudgetStore((state) => state.currency);
+  const theme = useBudgetStore((state) => state.theme);
+  const setTheme = useBudgetStore((state) => state.setTheme);
+  const setCurrency = useBudgetStore((state) => state.setCurrency);
+  const setActivePage = useBudgetStore((state) => state.setActivePage);
+  const toggleSidebar = useBudgetStore((state) => state.toggleSidebar);
 
   useEffect(() => {
     const html = document.documentElement;
     html.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
-  const handleLogin = async (username: string, password: string) => {
-    const config = loadAuthConfig();
-    if (!config) {
-      throw new Error("No hay acceso configurado.");
+  useEffect(() => {
+    const matched = PAGE_ITEMS.find((item) =>
+      location.pathname === item.path || location.pathname.startsWith(`${item.path}/`),
+    );
+    if (matched && matched.key !== activePage) {
+      setActivePage(matched.key);
     }
-    const ok = await verifyCredentials(username, password, config);
-    if (!ok) {
-      throw new Error("Usuario o clave invalida.");
-    }
-    setActiveSession(true);
-    setAuthenticated(true);
-  };
+  }, [location.pathname, activePage, setActivePage]);
 
-  const handleSetup = async (username: string, password: string) => {
-    const config = await createAuthConfig(username, password);
-    saveAuthConfig(config);
-    setHasConfig(true);
-    setActiveSession(true);
-    setAuthenticated(true);
-  };
-
-  const handleLogout = () => {
-    setActiveSession(false);
-    setAuthenticated(false);
-  };
-
-  if (isLoading || !authReady) return <LoadingView />;
-  if (!authenticated) {
-    return <AuthPage hasConfig={hasConfig} onLogin={handleLogin} onSetup={handleSetup} />;
-  }
-
-  const renderPage = () => {
-    switch (activePage) {
-      case "dashboard":
-        return <DashboardPage />;
-      case "transactions":
-        return <TransactionsPage />;
-      case "budget":
-        return <BudgetPage />;
-      case "categories":
-        return <CategoriesSourcesPage />;
-      case "goals":
-        return <GoalsPage />;
-      case "investments":
-        return <InvestmentsPage />;
-      case "debts":
-        return <DebtsPage />;
-      case "reports":
-        return <ReportsPage />;
-      case "networth":
-        return <NetWorthPage />;
-      case "settings":
-        return <SettingsPage />;
-      default:
-        return (
-          <Card title="Pagina no encontrada">
-            <p>Selecciona una opcion del menu lateral.</p>
-          </Card>
-        );
-    }
-  };
+  if (!isHydrated || budgetLoading) return <LoadingView />;
+  if (!isAuthenticated || !currentUser) return <Navigate to="/login" replace />;
+  if (!currentUser.onboardingCompleted) return <Navigate to="/onboarding" replace />;
 
   return (
     <AppLayout
       activePage={activePage}
-      collapsed={sidebarCollapsed}
+      collapsed={collapsed}
       currency={currency}
       theme={theme}
-      onNavigate={setActivePage}
+      user={currentUser}
       onToggleSidebar={toggleSidebar}
       onCurrencyChange={setCurrency}
       onThemeToggle={() => setTheme(theme === "dark" ? "light" : "dark")}
-      onLogout={handleLogout}
+      onLogout={logout}
     >
-      {renderPage()}
+      <Outlet />
     </AppLayout>
+  );
+};
+
+const HomeRedirect = () => {
+  const isHydrated = useAuthStore((state) => state.isHydrated);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const currentUser = useAuthStore((state) => state.currentUser);
+  if (!isHydrated) return <LoadingView />;
+  if (!isAuthenticated || !currentUser) return <Navigate to="/login" replace />;
+  return <Navigate to={resolveProtectedPath(currentUser.onboardingCompleted)} replace />;
+};
+
+const NotFound = () => (
+  <div className="min-h-screen bg-slate-950 p-6">
+    <div className="mx-auto max-w-xl">
+      <Card title="Pagina no encontrada">
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          La ruta no existe. Usa el menu lateral para volver al dashboard.
+        </p>
+      </Card>
+    </div>
+  </div>
+);
+
+export default function App() {
+  useSessionBoot();
+
+  return (
+    <Routes>
+      <Route path="/" element={<HomeRedirect />} />
+      <Route
+        path="/login"
+        element={
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/register"
+        element={
+          <PublicRoute>
+            <RegisterPage />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/forgot-password"
+        element={
+          <PublicRoute>
+            <ForgotPasswordPage />
+          </PublicRoute>
+        }
+      />
+      <Route path="/onboarding" element={<ProtectedOnboardingRoute />} />
+
+      <Route path="/app" element={<ProtectedAppShell />}>
+        <Route index element={<Navigate to="/app/dashboard" replace />} />
+        <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="loans" element={<LoansPage />} />
+        <Route path="transactions" element={<TransactionsPage />} />
+        <Route path="budget" element={<BudgetPage />} />
+        <Route path="categories" element={<CategoriesSourcesPage />} />
+        <Route path="goals" element={<GoalsPage />} />
+        <Route path="investments" element={<InvestmentsPage />} />
+        <Route path="debts" element={<DebtsPage />} />
+        <Route path="reports" element={<ReportsPage />} />
+        <Route path="networth" element={<NetWorthPage />} />
+        <Route path="profile" element={<ProfilePage />} />
+      </Route>
+
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   );
 }

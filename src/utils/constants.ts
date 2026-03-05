@@ -1,7 +1,7 @@
 import type { CurrencyCode, PageKey } from "../types";
 
 export const APP_VERSION = 1;
-export const STORAGE_KEY = "fintech-budget-manager:v1";
+export const STORAGE_KEY_PREFIX = "fintech-budget-manager:v1";
 
 export const CURRENCY_META: Record<CurrencyCode, { symbol: string; locale: string }> = {
   USD: { symbol: "$", locale: "en-US" },
@@ -12,15 +12,16 @@ export const CURRENCY_META: Record<CurrencyCode, { symbol: string; locale: strin
   ARS: { symbol: "$", locale: "es-AR" },
 };
 
-export const PAGE_ITEMS: Array<{ key: PageKey; label: string }> = [
-  { key: "dashboard", label: "Dashboard" },
-  { key: "transactions", label: "Transacciones" },
-  { key: "budget", label: "Presupuesto" },
-  { key: "categories", label: "Categorias y Fuentes" },
-  { key: "goals", label: "Metas de Ahorro" },
-  { key: "investments", label: "Inversiones" },
-  { key: "debts", label: "Deudas y Pasivos" },
-  { key: "reports", label: "Reportes" },
-  { key: "networth", label: "Patrimonio Neto" },
-  { key: "settings", label: "Backup y Ajustes" },
+export const PAGE_ITEMS: Array<{ key: PageKey; label: string; path: string; icon: string }> = [
+  { key: "dashboard", label: "Dashboard", path: "/app/dashboard", icon: "DB" },
+  { key: "loans", label: "Prestamos", path: "/app/loans", icon: "PR" },
+  { key: "transactions", label: "Transacciones", path: "/app/transactions", icon: "TX" },
+  { key: "budget", label: "Presupuesto", path: "/app/budget", icon: "BG" },
+  { key: "categories", label: "Categorias y Fuentes", path: "/app/categories", icon: "CF" },
+  { key: "goals", label: "Metas de Ahorro", path: "/app/goals", icon: "MT" },
+  { key: "investments", label: "Inversiones", path: "/app/investments", icon: "IN" },
+  { key: "debts", label: "Deudas y Pasivos", path: "/app/debts", icon: "DP" },
+  { key: "reports", label: "Reportes", path: "/app/reports", icon: "RP" },
+  { key: "networth", label: "Patrimonio Neto", path: "/app/networth", icon: "PN" },
+  { key: "profile", label: "Perfil y Configuracion", path: "/app/profile", icon: "PF" },
 ];

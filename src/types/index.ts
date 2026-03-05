@@ -1,9 +1,11 @@
 export type ThemeMode = "dark" | "light";
 
 export type CurrencyCode = "USD" | "EUR" | "MXN" | "COP" | "PEN" | "ARS";
+export type LanguageCode = "es" | "en";
 
 export type PageKey =
   | "dashboard"
+  | "loans"
   | "transactions"
   | "budget"
   | "categories"
@@ -12,7 +14,7 @@ export type PageKey =
   | "debts"
   | "reports"
   | "networth"
-  | "settings";
+  | "profile";
 
 export type TransactionType = "income" | "expense" | "investment" | "transfer";
 
@@ -103,14 +105,90 @@ export interface Investment {
   startDate: string;
 }
 
+export type DebtType =
+  | "personal_loan"
+  | "credit_card"
+  | "mortgage"
+  | "auto"
+  | "student"
+  | "family_friend"
+  | "other";
+
+export type DebtPriority = "high" | "medium" | "low";
+
 export interface Debt {
   id: string;
   creditor: string;
+  debtType: DebtType;
   originalAmount: number;
   remainingBalance: number;
+  hasInterest: boolean;
   interestRate: number;
+  annualInterestRate: number;
   monthlyPayment: number;
+  dueDayOfMonth: number;
+  isKnownPerson: boolean;
+  knownPersonName?: string;
+  knownPersonRelation?: LoanRelation;
+  priority: DebtPriority;
+  color: string;
+  icon: string;
+  notes: string;
+  startDate: string;
   endDate: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type LoanRelation = "family" | "friend" | "coworker" | "other";
+export type LoanMethod = "cash" | "transfer" | "card";
+export type LoanInterestType = "monthly" | "annual";
+export type LoanStatus = "active" | "partial" | "paid" | "overdue" | "uncollectible";
+
+export interface LoanRecord {
+  id: string;
+  personName: string;
+  relation: LoanRelation;
+  principalAmount: number;
+  lentDate: string;
+  dueDate?: string;
+  hasInterest: boolean;
+  interestRate?: number;
+  interestType?: LoanInterestType;
+  lendingMethod: LoanMethod;
+  notes: string;
+  receipt: string;
+  statusOverride: "uncollectible" | null;
+  uncollectibleNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LoanPayment {
+  id: string;
+  loanId: string;
+  amount: number;
+  date: string;
+  method: LoanMethod;
+  note: string;
+  createdAt: string;
+}
+
+export interface DebtPayment {
+  id: string;
+  debtId: string;
+  amount: number;
+  date: string;
+  method: LoanMethod;
+  note: string;
+  isExtra: boolean;
+  createdAt: string;
+}
+
+export interface DebtHistoryPoint {
+  id: string;
+  month: string;
+  totalRemaining: number;
 }
 
 export type AssetType = "bank" | "investment" | "property" | "vehicle" | "other";
@@ -165,6 +243,10 @@ export interface AppDataState {
   investments: Investment[];
   investmentSnapshots: InvestmentSnapshot[];
   debts: Debt[];
+  debtPayments: DebtPayment[];
+  debtHistory: DebtHistoryPoint[];
+  loans: LoanRecord[];
+  loanPayments: LoanPayment[];
   assets: Asset[];
   liabilities: Liability[];
   netWorthHistory: NetWorthPoint[];

@@ -12,6 +12,8 @@ import { CashflowChart } from "../components/charts/CashflowChart";
 import { ExpenseDonutChart } from "../components/charts/ExpenseDonutChart";
 import { getCurrentMonthKey } from "../utils/date";
 import { Badge } from "../components/ui/Badge";
+import { computeLoanNumbers, receivableLoansTotal, resolveLoanStatus } from "../utils/loans";
+import { debtInterestRate, debtRemainingTotal, isDebtDueSoon, isDebtOverdue, nextDueDateISO } from "../utils/debts";
 
 export const DashboardPage = () => {
   const store = useBudgetStore();
@@ -21,13 +23,17 @@ export const DashboardPage = () => {
     categories,
     investments,
     debts,
+    debtPayments,
+    loans,
+    loanPayments,
     assets,
     liabilities,
     budgets,
   } = store;
 
-  const assetsTotal = assets.reduce((acc, item) => acc + item.value, 0);
-  const liabilitiesTotal = liabilities.reduce((acc, item) => acc + item.value, 0);
+  const loansReceivable = receivableLoansTotal(loans, loanPayments);
+  const assetsTotal = assets.reduce((acc, item) => acc + item.value, 0) + loansReceivable;
+  const liabilitiesTotal = liabilities.reduce((acc, item) => acc + item.value, 0) + debtRemainingTotal(debts);
   const metrics = computeDashboardMetrics(
     transactions,
     categories,
@@ -45,6 +51,27 @@ export const DashboardPage = () => {
 
   const cashflowData = cashflowLastSixMonths(transactions);
   const expenseData = expenseDistribution(transactions, categories);
+  const overdueLoans = loans
+    .filter((loan) => resolveLoanStatus(loan, loanPayments) === "overdue")
+    .map((loan) => ({ loan, pending: computeLoanNumbers(loan, loanPayments).pendingAmount }));
+
+  const recoveredThisMonth = loanPayments
+    .filter((payment) => payment.date.slice(0, 7) === month)
+    .reduce((acc, payment) => acc + payment.amount, 0);
+
+  const activeLoansCount = loans.filter((loan) => {
+    const status = resolveLoanStatus(loan, loanPayments);
+    return status === "active" || status === "partial" || status === "overdue";
+  }).length;
+
+  const activeDebts = debts.filter((item) => item.remainingBalance > 0);
+  const activeDebtTotal = activeDebts.reduce((acc, item) => acc + item.remainingBalance, 0);
+  const nextDebtPayment = [...activeDebts].sort((a, b) =>
+    nextDueDateISO(a.dueDayOfMonth).localeCompare(nextDueDateISO(b.dueDayOfMonth)),
+  )[0];
+  const highestDebtInterest = [...activeDebts].sort((a, b) => debtInterestRate(b) - debtInterestRate(a))[0];
+  const dueSoonDebts = activeDebts.filter((item) => isDebtDueSoon(item, 5)).length;
+  const overdueDebts = activeDebts.filter((item) => isDebtOverdue(item, debtPayments)).length;
 
   const needsExpense = transactions
     .filter((tx) => tx.type === "expense")
@@ -73,6 +100,17 @@ export const DashboardPage = () => {
         <KpiCard label="Ingresos del mes" value={formatCurrency(metrics.monthlyIncome, currency)} tone="income" />
         <KpiCard label="Gastos del mes" value={formatCurrency(metrics.monthlyExpense, currency)} tone="expense" />
         <KpiCard label="Patrimonio neto" value={formatCurrency(metrics.netWorth, currency)} tone="investment" />
+        <KpiCard
+          label="Prestamos activos por cobrar"
+          value={formatCurrency(loansReceivable, currency)}
+          hint={`${activeLoansCount} prestamos activos`}
+          tone="warning"
+        />
+        <KpiCard
+          label="Recuperado este mes"
+          value={formatCurrency(recoveredThisMonth, currency)}
+          tone="income"
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -104,6 +142,51 @@ export const DashboardPage = () => {
           </p>
         </Card>
       )}
+
+      {overdueLoans.length > 0 ? (
+        <Card title="Pendientes">
+          <p className="mb-2 text-sm font-semibold text-warning">
+            Tienes {overdueLoans.length} prestamos vencidos pendientes de cobro.
+          </p>
+          <div className="space-y-2 text-sm">
+            {overdueLoans.map((item) => (
+              <div key={item.loan.id} className="flex items-center justify-between rounded-lg bg-slate-100 p-2 dark:bg-slate-800">
+                <span>{item.loan.personName}</span>
+                <span className="text-expense">{formatCurrency(item.pending, currency)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {(dueSoonDebts > 0 || overdueDebts > 0) ? (
+        <Card title="Alertas de Deudas">
+          <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
+            <p>
+              Proximos 5 dias: <strong>{dueSoonDebts}</strong>
+            </p>
+            <p>
+              Vencidas: <strong className="text-expense">{overdueDebts}</strong>
+            </p>
+          </div>
+        </Card>
+      ) : null}
+
+      <Card title="Resumen de Deudas">
+        <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-3">
+          <p>Total deudas activas: {formatCurrency(activeDebtTotal, currency)}</p>
+          <p>
+            Proximo pago:{" "}
+            {nextDebtPayment
+              ? `${nextDueDateISO(nextDebtPayment.dueDayOfMonth)} · ${formatCurrency(nextDebtPayment.monthlyPayment, currency)}`
+              : "-"}
+          </p>
+          <p>
+            Mayor interes:{" "}
+            {highestDebtInterest ? `${highestDebtInterest.creditor} (${debtInterestRate(highestDebtInterest).toFixed(1)}%)` : "-"}
+          </p>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card title="Flujo de caja (ultimos 6 meses)">

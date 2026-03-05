@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 
 interface BadgeProps {
   children: ReactNode;
-  tone?: "neutral" | "success" | "warning" | "danger";
+  tone?: "neutral" | "success" | "warning" | "danger" | "info";
 }
 
 const tones: Record<NonNullable<BadgeProps["tone"]>, string> = {
@@ -12,6 +12,7 @@ const tones: Record<NonNullable<BadgeProps["tone"]>, string> = {
   success: "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
   warning: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300",
   danger: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
+  info: "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300",
 };
 
 export const Badge = ({ children, tone = "neutral" }: BadgeProps) => (

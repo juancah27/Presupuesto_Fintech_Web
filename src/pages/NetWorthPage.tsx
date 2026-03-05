@@ -4,6 +4,7 @@ import { useBudgetStore } from "../store/useBudgetStore";
 import type { AssetType, LiabilityType } from "../types";
 import { formatCurrency } from "../utils/currency";
 import { NetWorthChart } from "../components/charts/NetWorthChart";
+import { receivableLoansTotal } from "../utils/loans";
 
 export const NetWorthPage = () => {
   const store = useBudgetStore();
@@ -11,6 +12,9 @@ export const NetWorthPage = () => {
     currency,
     assets,
     liabilities,
+    debts,
+    loans,
+    loanPayments,
     netWorthHistory,
     addAsset,
     updateAsset,
@@ -23,8 +27,11 @@ export const NetWorthPage = () => {
   const [assetForm, setAssetForm] = useState({ name: "", type: "bank" as AssetType, value: "" });
   const [liabilityForm, setLiabilityForm] = useState({ name: "", type: "debt" as LiabilityType, value: "" });
 
-  const totalAssets = assets.reduce((acc, item) => acc + item.value, 0);
-  const totalLiabilities = liabilities.reduce((acc, item) => acc + item.value, 0);
+  const loansReceivable = receivableLoansTotal(loans, loanPayments);
+  const manualAssetsTotal = assets.reduce((acc, item) => acc + item.value, 0);
+  const totalAssets = manualAssetsTotal + loansReceivable;
+  const debtsTotal = debts.reduce((acc, item) => acc + item.remainingBalance, 0);
+  const totalLiabilities = liabilities.reduce((acc, item) => acc + item.value, 0) + debtsTotal;
   const netWorth = totalAssets - totalLiabilities;
 
   return (
@@ -69,6 +76,13 @@ export const NetWorthPage = () => {
             Agregar activo
           </button>
           <div className="space-y-2">
+            <div className="flex items-center justify-between rounded-xl border border-dashed border-cyan-300/60 p-2 text-sm dark:border-cyan-500/50">
+              <div>
+                <p>Prestamos por cobrar</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Calculado automaticamente</p>
+              </div>
+              <span className="font-semibold text-cyan-500">{formatCurrency(loansReceivable, currency)}</span>
+            </div>
             {assets.map((asset) => (
               <div key={asset.id} className="flex items-center justify-between rounded-xl border border-slate-200 p-2 text-sm dark:border-white/10">
                 <div>
@@ -139,6 +153,13 @@ export const NetWorthPage = () => {
             Agregar pasivo
           </button>
           <div className="space-y-2">
+            <div className="flex items-center justify-between rounded-xl border border-dashed border-red-300/60 p-2 text-sm dark:border-red-500/50">
+              <div>
+                <p>Deudas registradas</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Calculado automaticamente</p>
+              </div>
+              <span className="font-semibold text-expense">{formatCurrency(debtsTotal, currency)}</span>
+            </div>
             {liabilities.map((liability) => (
               <div key={liability.id} className="flex items-center justify-between rounded-xl border border-slate-200 p-2 text-sm dark:border-white/10">
                 <div>
