@@ -2,3 +2,9 @@ node_modules
 dist
 .DS_Store
 *.log
+*.rar
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+tailwind.config.js
+tailwind.config.d.ts
