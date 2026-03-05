@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AppLayout } from "./components/layout/AppLayout";
 import { Card } from "./components/ui/Card";
 import { Skeleton } from "./components/ui/Skeleton";
@@ -13,6 +13,15 @@ import { NetWorthPage } from "./pages/NetWorthPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
+import { AuthPage } from "./pages/AuthPage";
+import {
+  createAuthConfig,
+  hasActiveSession,
+  loadAuthConfig,
+  saveAuthConfig,
+  setActiveSession,
+  verifyCredentials,
+} from "./utils/auth";
 
 const LoadingView = () => (
   <div className="min-h-screen bg-slate-950 p-6">
@@ -41,9 +50,19 @@ export default function App() {
     setActivePage,
     toggleSidebar,
   } = store;
+  const [authReady, setAuthReady] = useState(false);
+  const [hasConfig, setHasConfig] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
     useBudgetStore.getState().hydrate();
+  }, []);
+
+  useEffect(() => {
+    const config = loadAuthConfig();
+    setHasConfig(Boolean(config));
+    setAuthenticated(Boolean(config) && hasActiveSession());
+    setAuthReady(true);
   }, []);
 
   useEffect(() => {
@@ -51,7 +70,36 @@ export default function App() {
     html.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
-  if (isLoading) return <LoadingView />;
+  const handleLogin = async (username: string, password: string) => {
+    const config = loadAuthConfig();
+    if (!config) {
+      throw new Error("No hay acceso configurado.");
+    }
+    const ok = await verifyCredentials(username, password, config);
+    if (!ok) {
+      throw new Error("Usuario o clave invalida.");
+    }
+    setActiveSession(true);
+    setAuthenticated(true);
+  };
+
+  const handleSetup = async (username: string, password: string) => {
+    const config = await createAuthConfig(username, password);
+    saveAuthConfig(config);
+    setHasConfig(true);
+    setActiveSession(true);
+    setAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    setActiveSession(false);
+    setAuthenticated(false);
+  };
+
+  if (isLoading || !authReady) return <LoadingView />;
+  if (!authenticated) {
+    return <AuthPage hasConfig={hasConfig} onLogin={handleLogin} onSetup={handleSetup} />;
+  }
 
   const renderPage = () => {
     switch (activePage) {
@@ -94,6 +142,7 @@ export default function App() {
       onToggleSidebar={toggleSidebar}
       onCurrencyChange={setCurrency}
       onThemeToggle={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onLogout={handleLogout}
     >
       {renderPage()}
     </AppLayout>

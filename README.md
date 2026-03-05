@@ -44,6 +44,8 @@ src/
 - Skeleton loaders en carga inicial
 - Formateo monetario para USD, EUR, MXN, COP, PEN y ARS
 - Seed data para primera ejecucion
+- Login local de entrada (usuario/clave con hash y sesion de navegador)
+- Favicon personalizado para despliegue
 
 ## Ejecutar
 
