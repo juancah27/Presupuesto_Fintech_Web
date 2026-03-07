@@ -14,6 +14,7 @@ export const CURRENCY_META: Record<CurrencyCode, { symbol: string; locale: strin
 
 export const PAGE_ITEMS: Array<{ key: PageKey; label: string; path: string; icon: string }> = [
   { key: "dashboard", label: "Dashboard", path: "/app/dashboard", icon: "DB" },
+  { key: "accounts", label: "Cuentas", path: "/app/accounts", icon: "CT" },
   { key: "loans", label: "Prestamos", path: "/app/loans", icon: "PR" },
   { key: "transactions", label: "Transacciones", path: "/app/transactions", icon: "TX" },
   { key: "budget", label: "Presupuesto", path: "/app/budget", icon: "BG" },

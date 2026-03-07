@@ -1,5 +1,8 @@
 import { create } from "zustand";
 import type {
+  Account,
+  AccountSortMode,
+  AccountTransfer,
   AppDataState,
   Asset,
   Category,
@@ -22,6 +25,7 @@ import type {
 import { nowISO } from "../utils/date";
 import { makeId } from "../utils/id";
 import { buildNetWorthHistoryPoint } from "../utils/kpi";
+import { accountBalance, netWorthAccountsAssets, netWorthAccountsLiabilities } from "../utils/accounts";
 import { buildDebtHistoryPoint, debtRemainingTotal } from "../utils/debts";
 import { receivableLoansTotal } from "../utils/loans";
 import { createSeedData } from "../utils/seed";
@@ -65,11 +69,29 @@ interface BudgetActions {
   addDebt: (payload: Omit<Debt, "id" | "createdAt" | "updatedAt">) => void;
   updateDebt: (id: string, payload: Partial<Debt>) => void;
   deleteDebt: (id: string) => void;
-  addDebtPayment: (payload: Omit<DebtPayment, "id" | "createdAt">) => void;
+  addDebtPayment: (payload: Omit<DebtPayment, "id" | "createdAt"> & { accountId?: string }) => void;
+  addAccount: (payload: Omit<Account, "id" | "sortOrder" | "createdAt" | "updatedAt">) => void;
+  updateAccount: (id: string, payload: Partial<Account>) => void;
+  deleteAccount: (id: string) => void;
+  setAccountSortMode: (mode: AccountSortMode) => void;
+  reorderAccounts: (orderedIds: string[]) => void;
+  addAccountTransfer: (payload: {
+    fromAccountId: string;
+    toAccountId: string;
+    amount: number;
+    date: string;
+    note: string;
+  }) => void;
+  adjustAccountBalance: (payload: {
+    accountId: string;
+    realBalance: number;
+    date: string;
+    note: string;
+  }) => void;
   addLoan: (payload: Omit<LoanRecord, "id" | "createdAt" | "updatedAt" | "statusOverride">) => void;
   updateLoan: (id: string, payload: Partial<LoanRecord>) => void;
   deleteLoan: (id: string) => void;
-  addLoanPayment: (payload: Omit<LoanPayment, "id" | "createdAt">) => void;
+  addLoanPayment: (payload: Omit<LoanPayment, "id" | "createdAt"> & { accountId?: string }) => void;
   markLoanUncollectible: (loanId: string, note: string) => void;
   addAsset: (payload: Omit<Asset, "id">) => void;
   updateAsset: (id: string, payload: Partial<Asset>) => void;
@@ -84,11 +106,27 @@ interface BudgetStore extends AppDataState, BudgetActions {
   currentUserId: string | null;
 }
 
-const totalAssetsWithLoans = (state: Pick<AppDataState, "assets" | "loans" | "loanPayments">): number =>
-  state.assets.reduce((acc, item) => acc + item.value, 0) + receivableLoansTotal(state.loans, state.loanPayments);
+const totalAssetsWithLoans = (
+  state: Pick<AppDataState, "assets" | "loans" | "loanPayments" | "accounts" | "transactions">,
+): number =>
+  state.assets.reduce((acc, item) => acc + item.value, 0) +
+  receivableLoansTotal(state.loans, state.loanPayments) +
+  netWorthAccountsAssets(state.accounts, state.transactions);
 
-const totalLiabilities = (state: Pick<AppDataState, "liabilities" | "debts">): number =>
-  state.liabilities.reduce((acc, item) => acc + item.value, 0) + debtRemainingTotal(state.debts);
+const totalLiabilities = (
+  state: Pick<AppDataState, "liabilities" | "debts" | "accounts" | "transactions">,
+): number =>
+  state.liabilities.reduce((acc, item) => acc + item.value, 0) +
+  debtRemainingTotal(state.debts) +
+  netWorthAccountsLiabilities(state.accounts, state.transactions);
+
+const defaultAccountId = (accounts: Account[]): string | undefined =>
+  accounts.find((item) => item.type !== "credit_card")?.id ?? accounts[0]?.id;
+
+const normalizeSortOrder = (accounts: Account[]): Account[] =>
+  [...accounts]
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+    .map((account, index) => ({ ...account, sortOrder: index + 1 }));
 
 const enrichWithNetWorthPoint = (state: AppDataState): AppDataState => ({
   ...state,
@@ -118,6 +156,9 @@ const getSerializable = (state: BudgetStore): AppDataState => ({
   debts: state.debts,
   debtPayments: state.debtPayments,
   debtHistory: state.debtHistory,
+  accounts: state.accounts,
+  accountTransfers: state.accountTransfers,
+  accountSortMode: state.accountSortMode,
   loans: state.loans,
   loanPayments: state.loanPayments,
   assets: state.assets,
@@ -208,31 +249,65 @@ export const useBudgetStore = create<BudgetStore>((set) => {
 
     addTransaction: (payload) =>
       set((state) => {
+        const accountId = payload.accountId ?? defaultAccountId(state.accounts);
         const tx: Transaction = {
           ...payload,
+          accountId,
           id: makeId("tx"),
           createdAt: nowISO(),
           updatedAt: nowISO(),
         };
         const transactions = [tx, ...state.transactions];
-        persist(state, { transactions });
-        return { transactions };
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, transactions }),
+          totalLiabilities({ ...state, transactions }),
+        );
+        persist(state, { transactions, netWorthHistory });
+        return { transactions, netWorthHistory };
       }),
 
     updateTransaction: (id, payload) =>
       set((state) => {
+        const fallbackAccountId = defaultAccountId(state.accounts);
         const transactions = state.transactions.map((item) =>
-          item.id === id ? { ...item, ...payload, updatedAt: nowISO() } : item,
+          item.id === id
+            ? {
+                ...item,
+                ...payload,
+                accountId: payload.accountId ?? item.accountId ?? fallbackAccountId,
+                updatedAt: nowISO(),
+              }
+            : item,
         );
-        persist(state, { transactions });
-        return { transactions };
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, transactions }),
+          totalLiabilities({ ...state, transactions }),
+        );
+        persist(state, { transactions, netWorthHistory });
+        return { transactions, netWorthHistory };
       }),
 
     deleteTransaction: (id) =>
       set((state) => {
-        const transactions = state.transactions.filter((item) => item.id !== id);
-        persist(state, { transactions });
-        return { transactions };
+        const linkedTransfer = state.accountTransfers.find(
+          (item) => item.expenseTransactionId === id || item.incomeTransactionId === id,
+        );
+        const transferTxIds = linkedTransfer
+          ? new Set([linkedTransfer.expenseTransactionId, linkedTransfer.incomeTransactionId])
+          : new Set<string>([id]);
+        const transactions = state.transactions.filter((item) => !transferTxIds.has(item.id));
+        const accountTransfers = linkedTransfer
+          ? state.accountTransfers.filter((item) => item.id !== linkedTransfer.id)
+          : state.accountTransfers;
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, transactions }),
+          totalLiabilities({ ...state, transactions }),
+        );
+        persist(state, { transactions, accountTransfers, netWorthHistory });
+        return { transactions, accountTransfers, netWorthHistory };
       }),
 
     addBudget: (payload) =>
@@ -511,6 +586,7 @@ export const useBudgetStore = create<BudgetStore>((set) => {
           id: makeId("tx"),
           amount,
           type: "expense",
+          accountId: payload.accountId ?? defaultAccountId(state.accounts),
           categoryId: debtCategory.id,
           sourceId: debtSource.id,
           date: payload.date,
@@ -531,6 +607,236 @@ export const useBudgetStore = create<BudgetStore>((set) => {
         );
         persist(state, { debtPayments, debts, categories, sources, transactions, debtHistory, netWorthHistory });
         return { debtPayments, debts, categories, sources, transactions, debtHistory, netWorthHistory };
+      }),
+
+    addAccount: (payload) =>
+      set((state) => {
+        const sortOrder = state.accounts.length + 1;
+        const account: Account = {
+          ...payload,
+          id: makeId("acc"),
+          sortOrder,
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        };
+        const accounts = normalizeSortOrder([account, ...state.accounts]);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, accounts }),
+          totalLiabilities({ ...state, accounts }),
+        );
+        persist(state, { accounts, netWorthHistory });
+        return { accounts, netWorthHistory };
+      }),
+
+    updateAccount: (id, payload) =>
+      set((state) => {
+        const accounts = state.accounts.map((item) =>
+          item.id === id ? { ...item, ...payload, updatedAt: nowISO() } : item,
+        );
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, accounts }),
+          totalLiabilities({ ...state, accounts }),
+        );
+        persist(state, { accounts, netWorthHistory });
+        return { accounts, netWorthHistory };
+      }),
+
+    deleteAccount: (id) =>
+      set((state) => {
+        const remainingBase = state.accounts.filter((item) => item.id !== id);
+        const transferIdsToRemove = new Set(
+          state.accountTransfers
+            .filter((item) => item.fromAccountId === id || item.toAccountId === id)
+            .map((item) => item.id),
+        );
+        const transferTxIdsToRemove = new Set(
+          state.accountTransfers
+            .filter((item) => transferIdsToRemove.has(item.id))
+            .flatMap((item) => [item.expenseTransactionId, item.incomeTransactionId]),
+        );
+        const fallback = defaultAccountId(remainingBase);
+        const transactions = state.transactions
+          .filter((item) => !transferTxIdsToRemove.has(item.id))
+          .map((item) => {
+            if (item.accountId !== id) return item;
+            if (!fallback) return item;
+            return { ...item, accountId: fallback, updatedAt: nowISO() };
+          });
+        const accountTransfers = state.accountTransfers.filter((item) => !transferIdsToRemove.has(item.id));
+
+        const accounts: Account[] =
+          remainingBase.length > 0
+            ? normalizeSortOrder(remainingBase)
+            : [
+                {
+                  id: makeId("acc"),
+                  name: "Cuenta principal",
+                  type: "cash" as const,
+                  initialBalance: 0,
+                  currency: state.currency,
+                  color: "#22c55e",
+                  icon: "EF",
+                  includeInTotal: true,
+                  includeInNetWorth: true,
+                  sortOrder: 1,
+                  createdAt: nowISO(),
+                  updatedAt: nowISO(),
+                },
+              ];
+        const normalizedTx =
+          remainingBase.length > 0
+            ? transactions
+            : transactions.map((item) => ({
+                ...item,
+                accountId: accounts[0].id,
+              }));
+
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, accounts, transactions: normalizedTx }),
+          totalLiabilities({ ...state, accounts, transactions: normalizedTx }),
+        );
+        persist(state, {
+          accounts,
+          accountTransfers,
+          transactions: normalizedTx,
+          netWorthHistory,
+        });
+        return {
+          accounts,
+          accountTransfers,
+          transactions: normalizedTx,
+          netWorthHistory,
+        };
+      }),
+
+    setAccountSortMode: (mode) =>
+      set((state) => {
+        persist(state, { accountSortMode: mode });
+        return { accountSortMode: mode };
+      }),
+
+    reorderAccounts: (orderedIds) =>
+      set((state) => {
+        const orderMap = new Map(orderedIds.map((id, index) => [id, index + 1]));
+        const accounts = normalizeSortOrder(
+          state.accounts.map((account) => ({
+            ...account,
+            sortOrder: orderMap.get(account.id) ?? account.sortOrder,
+            updatedAt: nowISO(),
+          })),
+        );
+        persist(state, { accounts, accountSortMode: "custom" });
+        return { accounts, accountSortMode: "custom" as const };
+      }),
+
+    addAccountTransfer: (payload) =>
+      set((state) => {
+        const from = state.accounts.find((item) => item.id === payload.fromAccountId);
+        const to = state.accounts.find((item) => item.id === payload.toAccountId);
+        if (!from || !to || from.id === to.id) return {};
+        const amount = Math.max(0, payload.amount);
+        if (!amount) return {};
+
+        const transferId = makeId("trf");
+        const expenseTxId = makeId("tx");
+        const incomeTxId = makeId("tx");
+        const expenseTx: Transaction = {
+          id: expenseTxId,
+          amount,
+          type: "expense",
+          accountId: from.id,
+          linkedTransferId: transferId,
+          date: payload.date,
+          description: `Transferencia a ${to.name}`,
+          motive: "Transferencia entre cuentas",
+          tags: ["transferencia", "cuenta"],
+          isRecurring: false,
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        };
+        const incomeTx: Transaction = {
+          id: incomeTxId,
+          amount,
+          type: "income",
+          accountId: to.id,
+          linkedTransferId: transferId,
+          date: payload.date,
+          description: `Transferencia desde ${from.name}`,
+          motive: "Transferencia entre cuentas",
+          tags: ["transferencia", "cuenta"],
+          isRecurring: false,
+          createdAt: nowISO(),
+          updatedAt: nowISO(),
+        };
+        const transfer: AccountTransfer = {
+          id: transferId,
+          fromAccountId: from.id,
+          toAccountId: to.id,
+          amount,
+          date: payload.date,
+          note: payload.note.trim(),
+          expenseTransactionId: expenseTxId,
+          incomeTransactionId: incomeTxId,
+          createdAt: nowISO(),
+        };
+        const transactions = [incomeTx, expenseTx, ...state.transactions];
+        const accountTransfers = [transfer, ...state.accountTransfers];
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, transactions }),
+          totalLiabilities({ ...state, transactions }),
+        );
+        persist(state, { transactions, accountTransfers, netWorthHistory });
+        return { transactions, accountTransfers, netWorthHistory };
+      }),
+
+    adjustAccountBalance: (payload) =>
+      set((state) => {
+        const account = state.accounts.find((item) => item.id === payload.accountId);
+        if (!account) return {};
+        const current = accountBalance(account, state.transactions);
+        const diff = Number((payload.realBalance - current).toFixed(2));
+        if (Math.abs(diff) < 0.01) return {};
+
+        const adjustmentTx: Transaction =
+          account.type === "credit_card"
+            ? {
+                id: makeId("tx"),
+                amount: Math.abs(diff),
+                type: diff > 0 ? "expense" : "income",
+                accountId: account.id,
+                date: payload.date,
+                description: `Ajuste de saldo - ${account.name}`,
+                motive: "Ajuste de saldo",
+                tags: ["ajuste", "tarjeta"],
+                isRecurring: false,
+                createdAt: nowISO(),
+                updatedAt: nowISO(),
+              }
+            : {
+                id: makeId("tx"),
+                amount: Math.abs(diff),
+                type: diff > 0 ? "income" : "expense",
+                accountId: account.id,
+                date: payload.date,
+                description: `Ajuste de saldo - ${account.name}`,
+                motive: "Ajuste de saldo",
+                tags: ["ajuste"],
+                isRecurring: false,
+                createdAt: nowISO(),
+                updatedAt: nowISO(),
+              };
+        const transactions = [adjustmentTx, ...state.transactions];
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, transactions }),
+          totalLiabilities({ ...state, transactions }),
+        );
+        persist(state, { transactions, netWorthHistory });
+        return { transactions, netWorthHistory };
       }),
 
     addLoan: (payload) =>
@@ -611,6 +917,7 @@ export const useBudgetStore = create<BudgetStore>((set) => {
           id: makeId("tx"),
           amount: payload.amount,
           type: "income",
+          accountId: payload.accountId ?? defaultAccountId(state.accounts),
           sourceId: recoverySource.id,
           date: payload.date,
           description: `Abono de prestamo - ${loan.personName}`,

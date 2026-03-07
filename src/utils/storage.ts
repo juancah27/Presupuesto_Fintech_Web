@@ -1,5 +1,6 @@
-import type { AppDataState, CurrencyCode, Debt } from "../types";
+import type { Account, AppDataState, Asset, CurrencyCode, Debt } from "../types";
 import { APP_VERSION, STORAGE_KEY_PREFIX } from "./constants";
+import { makeId } from "./id";
 import { createSeedData } from "./seed";
 
 interface PersistedEnvelope {
@@ -32,12 +33,79 @@ const normalizeDebt = (raw: Partial<Debt>, fallback: Debt): Debt => ({
   updatedAt: raw.updatedAt ?? fallback.updatedAt,
 });
 
+const normalizeAccount = (raw: Partial<Account>, fallback: Account, order: number): Account => ({
+  ...fallback,
+  ...raw,
+  type: raw.type ?? fallback.type,
+  initialBalance: Number(raw.initialBalance ?? fallback.initialBalance) || 0,
+  currency: raw.currency ?? fallback.currency,
+  color: raw.color ?? fallback.color,
+  icon: raw.icon ?? fallback.icon,
+  includeInTotal: typeof raw.includeInTotal === "boolean" ? raw.includeInTotal : fallback.includeInTotal,
+  includeInNetWorth:
+    typeof raw.includeInNetWorth === "boolean" ? raw.includeInNetWorth : fallback.includeInNetWorth,
+  creditLimit: raw.creditLimit ?? fallback.creditLimit,
+  statementDay: raw.statementDay ?? fallback.statementDay,
+  paymentDay: raw.paymentDay ?? fallback.paymentDay,
+  sortOrder: typeof raw.sortOrder === "number" ? raw.sortOrder : order,
+  createdAt: raw.createdAt ?? fallback.createdAt,
+  updatedAt: raw.updatedAt ?? fallback.updatedAt,
+});
+
+const isAssetMigrableToAccount = (asset: Asset): boolean =>
+  asset.type === "bank" || asset.type === "investment";
+
+const accountTypeFromAsset = (asset: Asset): Account["type"] =>
+  asset.type === "investment" ? "investment" : "bank";
+
 const normalizeState = (
   candidate: Partial<AppDataState> | undefined,
   currencyHint?: CurrencyCode,
 ): AppDataState => {
   const base = createSeedData(currencyHint);
   const data = { ...base, ...(candidate ?? {}) } as Partial<AppDataState>;
+
+  const fallbackAccount = base.accounts[0];
+  let normalizedAccounts: Account[] = Array.isArray(data.accounts)
+    ? data.accounts.map((item, index) => normalizeAccount(item, base.accounts[index] ?? fallbackAccount, index + 1))
+    : [];
+
+  let normalizedAssets: Asset[] = Array.isArray(data.assets) ? data.assets : base.assets;
+
+  if (normalizedAccounts.length === 0 && Array.isArray(data.assets)) {
+    const migrable = data.assets.filter(isAssetMigrableToAccount);
+    if (migrable.length > 0) {
+      normalizedAccounts = migrable.map((asset, index) => ({
+        id: makeId("acc"),
+        name: asset.name,
+        type: accountTypeFromAsset(asset),
+        initialBalance: asset.value,
+        currency: data.currency ?? base.currency,
+        color: asset.type === "investment" ? "#0ea5e9" : "#3b82f6",
+        icon: asset.type === "investment" ? "IV" : "BK",
+        includeInTotal: asset.type !== "investment",
+        includeInNetWorth: true,
+        institution: undefined,
+        notes: "Migrado desde Patrimonio Neto",
+        sortOrder: index + 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
+      normalizedAssets = data.assets.filter((asset) => !isAssetMigrableToAccount(asset));
+    }
+  }
+
+  if (normalizedAccounts.length === 0) {
+    normalizedAccounts = base.accounts;
+  }
+
+  const defaultAccountId =
+    normalizedAccounts.find((account) => account.type !== "credit_card")?.id ?? normalizedAccounts[0].id;
+
+  const normalizedTransactions = Array.isArray(data.transactions)
+    ? data.transactions.map((tx) => (tx.accountId ? tx : { ...tx, accountId: defaultAccountId }))
+    : base.transactions;
+
   return {
     ...base,
     ...data,
@@ -50,7 +118,7 @@ const normalizeState = (
     categories: Array.isArray(data.categories) ? data.categories : base.categories,
     subcategories: Array.isArray(data.subcategories) ? data.subcategories : base.subcategories,
     sources: Array.isArray(data.sources) ? data.sources : base.sources,
-    transactions: Array.isArray(data.transactions) ? data.transactions : base.transactions,
+    transactions: normalizedTransactions,
     budgets: Array.isArray(data.budgets) ? data.budgets : base.budgets,
     goals: Array.isArray(data.goals) ? data.goals : base.goals,
     goalContributions: Array.isArray(data.goalContributions)
@@ -65,9 +133,12 @@ const normalizeState = (
       : base.debts,
     debtPayments: Array.isArray(data.debtPayments) ? data.debtPayments : base.debtPayments,
     debtHistory: Array.isArray(data.debtHistory) ? data.debtHistory : base.debtHistory,
+    accounts: normalizedAccounts,
+    accountTransfers: Array.isArray(data.accountTransfers) ? data.accountTransfers : base.accountTransfers,
+    accountSortMode: data.accountSortMode ?? base.accountSortMode,
     loans: Array.isArray(data.loans) ? data.loans : base.loans,
     loanPayments: Array.isArray(data.loanPayments) ? data.loanPayments : base.loanPayments,
-    assets: Array.isArray(data.assets) ? data.assets : base.assets,
+    assets: normalizedAssets,
     liabilities: Array.isArray(data.liabilities) ? data.liabilities : base.liabilities,
     netWorthHistory: Array.isArray(data.netWorthHistory) ? data.netWorthHistory : base.netWorthHistory,
   };

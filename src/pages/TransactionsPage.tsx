@@ -10,6 +10,7 @@ import { useFilteredTransactions } from "../hooks/useFilteredTransactions";
 const initialFilters = (): TransactionFilters => ({
   query: "",
   type: "all",
+  accountId: "all",
   categoryId: "all",
   sourceId: "all",
   minAmount: null,
@@ -21,6 +22,7 @@ const initialFilters = (): TransactionFilters => ({
 const emptyForm = {
   amount: "",
   type: "expense" as TransactionType,
+  accountId: "",
   categoryId: "",
   subcategoryId: "",
   sourceId: "",
@@ -36,6 +38,7 @@ export const TransactionsPage = () => {
   const {
     currency,
     transactions,
+    accounts,
     categories,
     subcategories,
     sources,
@@ -68,6 +71,7 @@ export const TransactionsPage = () => {
     const errors: string[] = [];
     if (!form.amount || Number(form.amount) <= 0) errors.push("Monto debe ser mayor a 0.");
     if (!form.date) errors.push("Fecha obligatoria.");
+    if (!form.accountId) errors.push("Cuenta obligatoria.");
     if (!form.description.trim()) errors.push("Descripcion obligatoria.");
     if (!form.motive.trim()) errors.push("Motivo obligatorio.");
     if (form.type === "expense" && !form.categoryId) errors.push("Categoria obligatoria para gastos.");
@@ -79,6 +83,7 @@ export const TransactionsPage = () => {
     const payload = {
       amount: Number(form.amount),
       type: form.type,
+      accountId: form.accountId,
       categoryId: form.categoryId || undefined,
       subcategoryId: form.subcategoryId || undefined,
       sourceId: form.sourceId || undefined,
@@ -107,6 +112,7 @@ export const TransactionsPage = () => {
       amount: String(tx.amount),
       type: tx.type,
       categoryId: tx.categoryId ?? "",
+      accountId: tx.accountId ?? "",
       subcategoryId: tx.subcategoryId ?? "",
       sourceId: tx.sourceId ?? "",
       date: tx.date,
@@ -144,6 +150,19 @@ export const TransactionsPage = () => {
             <option value="expense">Gasto</option>
             <option value="investment">Inversion</option>
             <option value="transfer">Transferencia</option>
+          </select>
+
+          <select
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900"
+            value={form.accountId}
+            onChange={(event) => setForm((prev) => ({ ...prev, accountId: event.target.value }))}
+          >
+            <option value="">Seleccionar cuenta</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
           </select>
 
           {form.type === "expense" && (
@@ -274,6 +293,18 @@ export const TransactionsPage = () => {
           </select>
           <select
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900"
+            value={filters.accountId}
+            onChange={(event) => setFilters((prev) => ({ ...prev, accountId: event.target.value }))}
+          >
+            <option value="all">Todas las cuentas</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900"
             value={filters.categoryId}
             onChange={(event) => setFilters((prev) => ({ ...prev, categoryId: event.target.value }))}
           >
@@ -361,6 +392,7 @@ export const TransactionsPage = () => {
                 <th className="px-3 py-2">Fecha</th>
                 <th className="px-3 py-2">Tipo</th>
                 <th className="px-3 py-2">Monto</th>
+                <th className="px-3 py-2">Cuenta</th>
                 <th className="px-3 py-2">Categoria</th>
                 <th className="px-3 py-2">Fuente</th>
                 <th className="px-3 py-2">Descripcion</th>
@@ -373,6 +405,7 @@ export const TransactionsPage = () => {
                   <td className="px-3 py-2">{tx.date}</td>
                   <td className="px-3 py-2">{tx.type}</td>
                   <td className="px-3 py-2">{formatCurrency(tx.amount, currency)}</td>
+                  <td className="px-3 py-2">{accounts.find((account) => account.id === tx.accountId)?.name ?? "-"}</td>
                   <td className="px-3 py-2">{categories.find((cat) => cat.id === tx.categoryId)?.name ?? "-"}</td>
                   <td className="px-3 py-2">{sources.find((src) => src.id === tx.sourceId)?.name ?? "-"}</td>
                   <td className="px-3 py-2">{tx.description}</td>
@@ -398,7 +431,7 @@ export const TransactionsPage = () => {
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-slate-500 dark:text-slate-400">
+                  <td colSpan={8} className="px-3 py-6 text-center text-slate-500 dark:text-slate-400">
                     No hay resultados con los filtros actuales.
                   </td>
                 </tr>

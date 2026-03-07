@@ -114,6 +114,7 @@ export const DebtsPage = () => {
     debts,
     debtPayments,
     transactions,
+    accounts,
     addDebt,
     deleteDebt,
     addDebtPayment,
@@ -122,6 +123,7 @@ export const DebtsPage = () => {
   const [form, setForm] = useState(formSeed);
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(debts[0]?.id ?? null);
   const [paymentForm, setPaymentForm] = useState(paymentSeed);
+  const [paymentAccountId, setPaymentAccountId] = useState("");
   const [extraPayment, setExtraPayment] = useState("");
   const [attackBudget, setAttackBudget] = useState("1200");
   const [attackMode, setAttackMode] = useState<"snowball" | "avalanche">("avalanche");
@@ -269,6 +271,7 @@ export const DebtsPage = () => {
       method: paymentForm.method,
       note: isExtra ? "Pago extra aplicado desde simulador" : paymentForm.note.trim(),
       isExtra,
+      accountId: paymentAccountId || undefined,
     });
     if (isExtra) {
       setExtraPayment("");
@@ -566,6 +569,18 @@ export const DebtsPage = () => {
                 <div className="rounded-xl border border-slate-200 p-3 dark:border-white/10">
                   <h4 className="mb-2 text-sm font-semibold">Registrar pago</h4>
                   <div className="space-y-2">
+                    <select
+                      value={paymentAccountId}
+                      onChange={(event) => setPaymentAccountId(event.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900"
+                    >
+                      <option value="">Cuenta para pagar (opcional)</option>
+                      {accounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))}
+                    </select>
                     <input
                       type="number"
                       placeholder="Monto"

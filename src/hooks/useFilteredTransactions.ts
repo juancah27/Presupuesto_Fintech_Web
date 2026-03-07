@@ -11,6 +11,7 @@ export const useFilteredTransactions = (
   useMemo(() => {
     return transactions.filter((tx) => {
       if (filters.type !== "all" && tx.type !== filters.type) return false;
+      if (filters.accountId !== "all" && tx.accountId !== filters.accountId) return false;
       if (filters.categoryId !== "all" && tx.categoryId !== filters.categoryId) return false;
       if (filters.sourceId !== "all" && tx.sourceId !== filters.sourceId) return false;
       if (filters.minAmount !== null && tx.amount < filters.minAmount) return false;

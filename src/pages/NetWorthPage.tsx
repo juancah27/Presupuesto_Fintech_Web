@@ -5,6 +5,7 @@ import type { AssetType, LiabilityType } from "../types";
 import { formatCurrency } from "../utils/currency";
 import { NetWorthChart } from "../components/charts/NetWorthChart";
 import { receivableLoansTotal } from "../utils/loans";
+import { accountBalance, accountTypeLabel, netWorthAccountsAssets, netWorthAccountsLiabilities } from "../utils/accounts";
 
 export const NetWorthPage = () => {
   const store = useBudgetStore();
@@ -15,6 +16,7 @@ export const NetWorthPage = () => {
     debts,
     loans,
     loanPayments,
+    accounts,
     netWorthHistory,
     addAsset,
     updateAsset,
@@ -24,14 +26,16 @@ export const NetWorthPage = () => {
     deleteLiability,
   } = store;
 
-  const [assetForm, setAssetForm] = useState({ name: "", type: "bank" as AssetType, value: "" });
+  const [assetForm, setAssetForm] = useState({ name: "", type: "property" as AssetType, value: "" });
   const [liabilityForm, setLiabilityForm] = useState({ name: "", type: "debt" as LiabilityType, value: "" });
 
   const loansReceivable = receivableLoansTotal(loans, loanPayments);
   const manualAssetsTotal = assets.reduce((acc, item) => acc + item.value, 0);
-  const totalAssets = manualAssetsTotal + loansReceivable;
+  const accountsAsAssets = netWorthAccountsAssets(accounts, store.transactions);
+  const accountsAsLiabilities = netWorthAccountsLiabilities(accounts, store.transactions);
+  const totalAssets = manualAssetsTotal + loansReceivable + accountsAsAssets;
   const debtsTotal = debts.reduce((acc, item) => acc + item.remainingBalance, 0);
-  const totalLiabilities = liabilities.reduce((acc, item) => acc + item.value, 0) + debtsTotal;
+  const totalLiabilities = liabilities.reduce((acc, item) => acc + item.value, 0) + debtsTotal + accountsAsLiabilities;
   const netWorth = totalAssets - totalLiabilities;
 
   return (
@@ -50,8 +54,6 @@ export const NetWorthPage = () => {
               onChange={(event) => setAssetForm((prev) => ({ ...prev, type: event.target.value as AssetType }))}
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900"
             >
-              <option value="bank">Cuenta bancaria</option>
-              <option value="investment">Inversion</option>
               <option value="property">Propiedad</option>
               <option value="vehicle">Vehiculo</option>
               <option value="other">Otro</option>
@@ -68,14 +70,35 @@ export const NetWorthPage = () => {
             type="button"
             onClick={() => {
               if (!assetForm.name.trim() || Number(assetForm.value) <= 0) return;
+              if (assetForm.type === "bank" || assetForm.type === "investment") return;
               addAsset({ name: assetForm.name, type: assetForm.type, value: Number(assetForm.value) });
-              setAssetForm({ name: "", type: "bank", value: "" });
+              setAssetForm({ name: "", type: "property", value: "" });
             }}
             className="mb-3 rounded-lg bg-investment px-3 py-2 text-sm font-semibold text-white"
           >
             Agregar activo
           </button>
           <div className="space-y-2">
+            <div className="rounded-xl border border-dashed border-blue-300/60 p-2 text-sm dark:border-blue-500/50">
+              <p className="font-semibold">Cuentas y billeteras</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Se calculan automaticamente desde el modulo Cuentas.
+              </p>
+            </div>
+            {accounts
+              .filter((account) => account.includeInNetWorth)
+              .map((account) => {
+                const balance = accountBalance(account, store.transactions);
+                return (
+                  <div key={account.id} className="flex items-center justify-between rounded-xl border border-slate-200 p-2 text-sm dark:border-white/10">
+                    <div>
+                      <p>{account.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{accountTypeLabel(account.type)}</p>
+                    </div>
+                    <span>{formatCurrency(balance, account.currency)}</span>
+                  </div>
+                );
+              })}
             <div className="flex items-center justify-between rounded-xl border border-dashed border-cyan-300/60 p-2 text-sm dark:border-cyan-500/50">
               <div>
                 <p>Prestamos por cobrar</p>

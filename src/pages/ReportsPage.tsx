@@ -17,10 +17,12 @@ import { formatCurrency } from "../utils/currency";
 import { annualIncomeExpense, detectRecurringExpenses, topExpenseCategories } from "../utils/kpi";
 import { getCurrentMonthKey } from "../utils/date";
 import { NetWorthChart } from "../components/charts/NetWorthChart";
+import { ExpenseDonutChart } from "../components/charts/ExpenseDonutChart";
+import { accountBalance } from "../utils/accounts";
 
 export const ReportsPage = () => {
   const store = useBudgetStore();
-  const { currency, transactions, categories, sources, netWorthHistory, debtHistory } = store;
+  const { currency, transactions, categories, sources, netWorthHistory, debtHistory, accounts } = store;
 
   const monthKey = getCurrentMonthKey();
   const year = Number(monthKey.slice(0, 4));
@@ -41,6 +43,17 @@ export const ReportsPage = () => {
         sourceName: sources.find((src) => src.id === item.sourceId)?.name ?? "Sin fuente",
       })),
     [recurring, sources],
+  );
+  const accountDistribution = useMemo(
+    () =>
+      accounts
+        .map((account) => ({
+          name: account.name,
+          value: Math.max(accountBalance(account, transactions), 0),
+          color: account.color,
+        }))
+        .filter((item) => item.value > 0),
+    [accounts, transactions],
   );
 
   return (
@@ -130,6 +143,10 @@ export const ReportsPage = () => {
             </LineChart>
           </ResponsiveContainer>
         </div>
+      </Card>
+
+      <Card title="Distribucion de dinero por cuenta">
+        <ExpenseDonutChart data={accountDistribution} />
       </Card>
     </div>
   );

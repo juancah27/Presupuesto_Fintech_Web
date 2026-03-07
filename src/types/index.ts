@@ -5,6 +5,7 @@ export type LanguageCode = "es" | "en";
 
 export type PageKey =
   | "dashboard"
+  | "accounts"
   | "loans"
   | "transactions"
   | "budget"
@@ -49,9 +50,11 @@ export interface Transaction {
   id: string;
   amount: number;
   type: TransactionType;
+  accountId?: string;
   categoryId?: string;
   subcategoryId?: string;
   sourceId?: string;
+  linkedTransferId?: string;
   date: string;
   description: string;
   motive: string;
@@ -191,6 +194,49 @@ export interface DebtHistoryPoint {
   totalRemaining: number;
 }
 
+export type AccountType =
+  | "cash"
+  | "bank"
+  | "credit_card"
+  | "digital_wallet"
+  | "investment"
+  | "crypto"
+  | "other";
+
+export interface Account {
+  id: string;
+  name: string;
+  type: AccountType;
+  initialBalance: number;
+  currency: CurrencyCode;
+  color: string;
+  icon: string;
+  institution?: string;
+  notes?: string;
+  includeInTotal: boolean;
+  includeInNetWorth: boolean;
+  creditLimit?: number;
+  statementDay?: number;
+  paymentDay?: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountTransfer {
+  id: string;
+  fromAccountId: string;
+  toAccountId: string;
+  amount: number;
+  date: string;
+  note: string;
+  expenseTransactionId: string;
+  incomeTransactionId: string;
+  createdAt: string;
+}
+
+export type AccountSortMode = "custom" | "balance_desc" | "name" | "type";
+
 export type AssetType = "bank" | "investment" | "property" | "vehicle" | "other";
 export type LiabilityType = "debt" | "mortgage" | "loan" | "other";
 
@@ -219,6 +265,7 @@ export interface NetWorthPoint {
 export interface TransactionFilters {
   query: string;
   type: TransactionType | "all";
+  accountId: string | "all";
   categoryId: string | "all";
   sourceId: string | "all";
   minAmount: number | null;
@@ -245,6 +292,9 @@ export interface AppDataState {
   debts: Debt[];
   debtPayments: DebtPayment[];
   debtHistory: DebtHistoryPoint[];
+  accounts: Account[];
+  accountTransfers: AccountTransfer[];
+  accountSortMode: AccountSortMode;
   loans: LoanRecord[];
   loanPayments: LoanPayment[];
   assets: Asset[];

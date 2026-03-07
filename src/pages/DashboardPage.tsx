@@ -1,4 +1,4 @@
-import { Card } from "../components/ui/Card";
+﻿import { Card } from "../components/ui/Card";
 import { KpiCard } from "../components/ui/KpiCard";
 import { useBudgetStore } from "../store/useBudgetStore";
 import { formatCurrency } from "../utils/currency";
@@ -14,6 +14,7 @@ import { getCurrentMonthKey } from "../utils/date";
 import { Badge } from "../components/ui/Badge";
 import { computeLoanNumbers, receivableLoansTotal, resolveLoanStatus } from "../utils/loans";
 import { debtInterestRate, debtRemainingTotal, isDebtDueSoon, isDebtOverdue, nextDueDateISO } from "../utils/debts";
+import { netWorthAccountsAssets, netWorthAccountsLiabilities, topAccountsByBalance, totalAvailableBalance } from "../utils/accounts";
 
 export const DashboardPage = () => {
   const store = useBudgetStore();
@@ -28,12 +29,19 @@ export const DashboardPage = () => {
     loanPayments,
     assets,
     liabilities,
+    accounts,
     budgets,
   } = store;
 
   const loansReceivable = receivableLoansTotal(loans, loanPayments);
-  const assetsTotal = assets.reduce((acc, item) => acc + item.value, 0) + loansReceivable;
-  const liabilitiesTotal = liabilities.reduce((acc, item) => acc + item.value, 0) + debtRemainingTotal(debts);
+  const assetsTotal =
+    assets.reduce((acc, item) => acc + item.value, 0) +
+    loansReceivable +
+    netWorthAccountsAssets(accounts, transactions);
+  const liabilitiesTotal =
+    liabilities.reduce((acc, item) => acc + item.value, 0) +
+    debtRemainingTotal(debts) +
+    netWorthAccountsLiabilities(accounts, transactions);
   const metrics = computeDashboardMetrics(
     transactions,
     categories,
@@ -92,6 +100,8 @@ export const DashboardPage = () => {
     .filter((tx) => tx.type === "expense")
     .reduce((acc, tx) => acc + tx.amount, 0);
   const savingsAmount = Math.max(totalIncome - totalExpense, 0);
+  const topAccounts = topAccountsByBalance(accounts, transactions, 3);
+  const availableBalance = totalAvailableBalance(accounts, transactions);
 
   return (
     <div className="space-y-4">
@@ -111,7 +121,27 @@ export const DashboardPage = () => {
           value={formatCurrency(recoveredThisMonth, currency)}
           tone="income"
         />
+        <KpiCard
+          label="Saldo disponible en cuentas"
+          value={formatCurrency(availableBalance, currency)}
+          hint={`${accounts.length} cuentas`}
+        />
       </div>
+
+      <Card title="Top cuentas con mayor saldo">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+          {topAccounts.map((item) => (
+            <div key={item.account.id} className="rounded-xl bg-slate-100 p-2 text-sm dark:bg-slate-800">
+              <p className="font-semibold">{item.account.name}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{item.account.type}</p>
+              <p className="mt-1">{formatCurrency(item.balance, item.account.currency)}</p>
+            </div>
+          ))}
+          {topAccounts.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400">Sin cuentas registradas.</p>
+          ) : null}
+        </div>
+      </Card>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         <KpiCard label="Tasa de ahorro" value={`${metrics.savingsRate.toFixed(1)}%`} />
@@ -178,7 +208,7 @@ export const DashboardPage = () => {
           <p>
             Proximo pago:{" "}
             {nextDebtPayment
-              ? `${nextDueDateISO(nextDebtPayment.dueDayOfMonth)} · ${formatCurrency(nextDebtPayment.monthlyPayment, currency)}`
+              ? `${nextDueDateISO(nextDebtPayment.dueDayOfMonth)} - ${formatCurrency(nextDebtPayment.monthlyPayment, currency)}`
               : "-"}
           </p>
           <p>

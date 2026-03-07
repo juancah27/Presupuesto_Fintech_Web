@@ -3,6 +3,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { Card } from "./components/ui/Card";
 import { Skeleton } from "./components/ui/Skeleton";
+import { AccountsPage } from "./pages/AccountsPage";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CategoriesSourcesPage } from "./pages/CategoriesSourcesPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -198,6 +199,7 @@ export default function App() {
       <Route path="/app" element={<ProtectedAppShell />}>
         <Route index element={<Navigate to="/app/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="accounts" element={<AccountsPage />} />
         <Route path="loans" element={<LoansPage />} />
         <Route path="transactions" element={<TransactionsPage />} />
         <Route path="budget" element={<BudgetPage />} />
