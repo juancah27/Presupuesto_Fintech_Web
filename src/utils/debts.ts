@@ -71,6 +71,7 @@ const daysDiff = (fromISO: string, toISO: string): number => {
 export const isDebtDueSoon = (debt: Debt, days: number = 5, fromISO: string = todayISO()): boolean => {
   if (debt.remainingBalance <= 0) return false;
   const nextDue = nextDueDateISO(debt.dueDayOfMonth, fromISO);
+  if (nextDue < debt.startDate) return false;
   const diff = daysDiff(fromISO, nextDue);
   return diff >= 0 && diff <= days;
 };
@@ -78,6 +79,7 @@ export const isDebtDueSoon = (debt: Debt, days: number = 5, fromISO: string = to
 export const isDebtOverdue = (debt: Debt, payments: DebtPayment[], fromISO: string = todayISO()): boolean => {
   if (debt.remainingBalance <= 0) return false;
   const lastDue = lastDueDateISO(debt.dueDayOfMonth, fromISO);
+  if (lastDue < debt.startDate) return false;
   if (lastDue >= fromISO) return false;
   const monthKey = lastDue.slice(0, 7);
   const hasPaymentInDueMonth = payments.some(

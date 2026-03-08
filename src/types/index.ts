@@ -51,6 +51,7 @@ export interface Transaction {
   amount: number;
   type: TransactionType;
   accountId?: string;
+  splitGroupId?: string;
   categoryId?: string;
   subcategoryId?: string;
   sourceId?: string;

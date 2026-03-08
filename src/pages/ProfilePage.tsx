@@ -4,6 +4,7 @@ import { useAuthStore } from "../store/useAuthStore";
 import { useBudgetStore } from "../store/useBudgetStore";
 import type { AppDataState, CurrencyCode, LanguageCode } from "../types";
 import { downloadTextFile } from "../utils/csv";
+import type { BackupImportMode, BackupImportPreview } from "../utils/storage";
 import { exportBackupJson } from "../utils/storage";
 
 const currencyOptions: CurrencyCode[] = ["USD", "EUR", "MXN", "COP", "PEN", "ARS"];
@@ -17,6 +18,7 @@ export const ProfilePage = () => {
   const updateProfileSettings = useAuthStore((state) => state.updateProfileSettings);
   const updatePassword = useAuthStore((state) => state.updatePassword);
   const setCurrency = useBudgetStore((state) => state.setCurrency);
+  const previewBackupImport = useBudgetStore((state) => state.previewBackupImport);
   const importBackup = useBudgetStore((state) => state.importBackup);
   const deleteAllMyData = useBudgetStore((state) => state.deleteAllMyData);
 
@@ -35,6 +37,8 @@ export const ProfilePage = () => {
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
   const [importText, setImportText] = useState("");
+  const [importMode, setImportMode] = useState<BackupImportMode>("merge");
+  const [importPreview, setImportPreview] = useState<BackupImportPreview | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
@@ -103,13 +107,26 @@ export const ProfilePage = () => {
     }
   };
 
+  const previewImportJson = () => {
+    setImportMessage(null);
+    setImportError(null);
+    try {
+      const preview = previewBackupImport(importText, importMode);
+      setImportPreview(preview);
+      setImportMessage("Vista previa generada.");
+    } catch (error) {
+      setImportError((error as Error).message);
+    }
+  };
+
   const importJson = () => {
     setImportMessage(null);
     setImportError(null);
     try {
-      importBackup(importText);
+      importBackup(importText, importMode);
       setImportText("");
-      setImportMessage("Backup importado correctamente.");
+      setImportPreview(null);
+      setImportMessage(importMode === "merge" ? "Backup importado con merge." : "Backup reemplazado correctamente.");
     } catch (error) {
       setImportError((error as Error).message);
     }
@@ -239,17 +256,65 @@ export const ProfilePage = () => {
             </button>
             <textarea
               value={importText}
-              onChange={(event) => setImportText(event.target.value)}
+              onChange={(event) => {
+                setImportText(event.target.value);
+                setImportPreview(null);
+              }}
               placeholder="Pega aqui un backup JSON"
               className="min-h-44 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900 dark:text-slate-100"
             />
-            <button
-              type="button"
-              onClick={importJson}
-              className="rounded-lg bg-investment px-3 py-2 text-sm font-semibold text-white"
-            >
-              Importar backup
-            </button>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <label className="text-xs text-slate-500 dark:text-slate-400">
+                Modo de importacion
+                <select
+                  value={importMode}
+                  onChange={(event) => {
+                    setImportMode(event.target.value as BackupImportMode);
+                    setImportPreview(null);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  <option value="merge">Merge seguro (recomendado)</option>
+                  <option value="replace">Reemplazar todo</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={previewImportJson}
+                className="self-end rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-white/20"
+              >
+                Vista previa
+              </button>
+              <button
+                type="button"
+                onClick={importJson}
+                className="self-end rounded-lg bg-investment px-3 py-2 text-sm font-semibold text-white"
+              >
+                Aplicar importacion
+              </button>
+            </div>
+            {importPreview ? (
+              <div className="space-y-2 rounded-xl border border-slate-200 p-3 text-xs dark:border-white/10">
+                <p className="font-semibold">Resumen de vista previa ({importPreview.mode})</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  <p>Nuevos: {importPreview.totals.additions}</p>
+                  <p>Actualiza desde backup: {importPreview.totals.updatesFromImport}</p>
+                  <p>Se mantiene actual: {importPreview.totals.keptCurrent}</p>
+                  <p>Sin cambios: {importPreview.totals.unchanged}</p>
+                  <p>Se perderian con reemplazo: {importPreview.totals.replaceWouldDelete}</p>
+                </div>
+                <div className="max-h-44 overflow-auto rounded-lg bg-slate-100 p-2 dark:bg-slate-800">
+                  {importPreview.modules.map((module) => (
+                    <div key={module.key} className="mb-1 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <p className="font-semibold">{module.label}</p>
+                      <p>+{module.additions} / upd {module.updatesFromImport}</p>
+                      <p>keep {module.keptCurrent} / same {module.unchanged}</p>
+                      <p>replace pierde {module.replaceWouldDelete}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {importMessage ? <p className="text-xs text-emerald-500">{importMessage}</p> : null}
             {importError ? <p className="text-xs text-red-500">{importError}</p> : null}
           </div>

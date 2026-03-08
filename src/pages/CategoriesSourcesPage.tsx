@@ -196,10 +196,10 @@ export const CategoriesSourcesPage = () => {
         </div>
       </Card>
 
-      <Card title="Fuentes de ingreso/gasto">
+      <Card title="Fuentes (proveedor/comercio/canal)">
         <div className="space-y-2 rounded-xl border border-slate-200 p-3 dark:border-white/10">
           <input
-            placeholder="Nombre fuente"
+            placeholder="Nombre (ej: Tambo, Rappi, Netflix, Cliente X)"
             value={newSource.name}
             onChange={(event) => setNewSource((prev) => ({ ...prev, name: event.target.value }))}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900"

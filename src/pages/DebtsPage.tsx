@@ -90,6 +90,13 @@ const paymentSeed = {
   note: "",
 };
 
+const parseAmount = (value: string): number => {
+  const clean = value.trim();
+  if (!clean) return Number.NaN;
+  const normalized = clean.replace(",", ".");
+  return Number(normalized);
+};
+
 const Confetti = () => (
   <div className="pointer-events-none absolute inset-0 overflow-hidden">
     {Array.from({ length: 28 }).map((_, index) => (
@@ -121,6 +128,7 @@ export const DebtsPage = () => {
   } = store;
 
   const [form, setForm] = useState(formSeed);
+  const [createDebtError, setCreateDebtError] = useState<string | null>(null);
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(debts[0]?.id ?? null);
   const [paymentForm, setPaymentForm] = useState(paymentSeed);
   const [paymentAccountId, setPaymentAccountId] = useState("");
@@ -230,12 +238,38 @@ export const DebtsPage = () => {
   }, [selectedDebt?.remainingBalance, selectedDebt]);
 
   const handleCreateDebt = () => {
-    const originalAmount = Number(form.originalAmount);
-    const remainingBalance = Number(form.remainingBalance);
-    const monthlyPayment = Number(form.monthlyPayment);
-    const annualRate = Number(form.annualInterestRate || 0);
+    const originalAmount = parseAmount(form.originalAmount);
+    const remainingBalance = form.remainingBalance.trim()
+      ? parseAmount(form.remainingBalance)
+      : originalAmount;
+    const monthlyPayment = parseAmount(form.monthlyPayment);
+    const annualRate = form.hasInterest ? parseAmount(form.annualInterestRate || "0") : 0;
     const dueDay = Number(form.dueDayOfMonth || 1);
-    if (!form.creditor.trim() || originalAmount <= 0 || remainingBalance < 0 || monthlyPayment <= 0) return;
+    if (!form.creditor.trim()) {
+      setCreateDebtError("Ingresa el acreedor.");
+      return;
+    }
+    if (!Number.isFinite(originalAmount) || originalAmount <= 0) {
+      setCreateDebtError("El monto original debe ser mayor a 0.");
+      return;
+    }
+    if (!Number.isFinite(remainingBalance) || remainingBalance < 0) {
+      setCreateDebtError("El saldo actual debe ser un numero valido (>= 0).");
+      return;
+    }
+    if (!Number.isFinite(monthlyPayment) || monthlyPayment <= 0) {
+      setCreateDebtError("La cuota mensual debe ser mayor a 0.");
+      return;
+    }
+    if (form.hasInterest && (!Number.isFinite(annualRate) || annualRate < 0)) {
+      setCreateDebtError("La tasa de interes anual debe ser un numero valido.");
+      return;
+    }
+    if (form.isKnownPerson && !form.knownPersonName.trim()) {
+      setCreateDebtError("Ingresa el nombre de la persona.");
+      return;
+    }
+    setCreateDebtError(null);
 
     addDebt({
       creditor: form.creditor.trim(),
@@ -258,6 +292,7 @@ export const DebtsPage = () => {
       endDate: form.endDate || "",
     });
     setForm(formSeed);
+    setCreateDebtError(null);
   };
 
   const handleRegisterPayment = (isExtra: boolean) => {
@@ -476,6 +511,9 @@ export const DebtsPage = () => {
               placeholder="Notas"
               className="min-h-20 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/20 dark:bg-slate-900"
             />
+            {createDebtError ? (
+              <p className="text-xs font-semibold text-expense">{createDebtError}</p>
+            ) : null}
             <button
               type="button"
               onClick={handleCreateDebt}

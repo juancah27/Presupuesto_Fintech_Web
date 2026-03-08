@@ -30,9 +30,12 @@ import { buildDebtHistoryPoint, debtRemainingTotal } from "../utils/debts";
 import { receivableLoansTotal } from "../utils/loans";
 import { createSeedData } from "../utils/seed";
 import {
+  type BackupImportMode,
+  type BackupImportPreview,
   clearStateForUser,
-  importBackupJson,
+  importBackupJsonWithMode,
   loadStateForUser,
+  previewBackupJson,
   saveStateForUser,
 } from "../utils/storage";
 
@@ -40,13 +43,42 @@ interface BudgetActions {
   hydrateForUser: (userId: string, currencyHint?: CurrencyCode) => void;
   clearUserContext: () => void;
   resetWithSeed: () => void;
-  importBackup: (json: string) => void;
+  previewBackupImport: (json: string, mode?: BackupImportMode) => BackupImportPreview;
+  importBackup: (json: string, mode?: BackupImportMode) => void;
   deleteAllMyData: () => void;
   setTheme: (theme: ThemeMode) => void;
   setCurrency: (currency: CurrencyCode) => void;
   setActivePage: (page: PageKey) => void;
   toggleSidebar: () => void;
   addTransaction: (payload: Omit<Transaction, "id" | "createdAt" | "updatedAt">) => void;
+  addSplitExpenseTransaction: (payload: {
+    totalAmount: number;
+    categoryId?: string;
+    subcategoryId?: string;
+    sourceId?: string;
+    date: string;
+    description: string;
+    motive: string;
+    tags: string[];
+    isRecurring: boolean;
+    splits: Array<{ accountId: string; amount: number }>;
+  }) => void;
+  updateSplitExpenseGroup: (
+    groupId: string,
+    payload: {
+      totalAmount: number;
+      categoryId?: string;
+      subcategoryId?: string;
+      sourceId?: string;
+      date: string;
+      description: string;
+      motive: string;
+      tags: string[];
+      isRecurring: boolean;
+      splits: Array<{ accountId: string; amount: number }>;
+    },
+  ) => void;
+  deleteSplitExpenseGroup: (groupId: string) => void;
   updateTransaction: (id: string, payload: Partial<Transaction>) => void;
   deleteTransaction: (id: string) => void;
   addBudget: (payload: Omit<MonthlyBudget, "id">) => void;
@@ -128,6 +160,9 @@ const normalizeSortOrder = (accounts: Account[]): Account[] =>
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
     .map((account, index) => ({ ...account, sortOrder: index + 1 }));
 
+const splitTotal = (splits: Array<{ amount: number }>): number =>
+  Number(splits.reduce((acc, split) => acc + split.amount, 0).toFixed(2));
+
 const enrichWithNetWorthPoint = (state: AppDataState): AppDataState => ({
   ...state,
   debtHistory: buildDebtHistoryPoint(state.debtHistory, state.debts),
@@ -168,7 +203,7 @@ const getSerializable = (state: BudgetStore): AppDataState => ({
 
 const bootstrap = createSeedData();
 
-export const useBudgetStore = create<BudgetStore>((set) => {
+export const useBudgetStore = create<BudgetStore>((set, get) => {
   const persist = (state: BudgetStore, updates: Partial<AppDataState>) => {
     if (!state.currentUserId) return;
     const next = { ...getSerializable(state), ...updates } as AppDataState;
@@ -204,9 +239,20 @@ export const useBudgetStore = create<BudgetStore>((set) => {
         return { ...seeded };
       }),
 
-    importBackup: (json) =>
+    previewBackupImport: (json, mode = "merge") => {
+      const state = get();
+      return previewBackupJson(json, getSerializable(state), mode, state.currency);
+    },
+
+    importBackup: (json, mode = "replace") =>
       set((state) => {
-        const imported = enrichWithNetWorthPoint(importBackupJson(json, state.currency));
+        const { nextState } = importBackupJsonWithMode(
+          json,
+          getSerializable(state),
+          mode,
+          state.currency,
+        );
+        const imported = enrichWithNetWorthPoint(nextState);
         if (state.currentUserId) saveStateForUser(state.currentUserId, imported);
         return { ...imported };
       }),
@@ -267,6 +313,113 @@ export const useBudgetStore = create<BudgetStore>((set) => {
         return { transactions, netWorthHistory };
       }),
 
+    addSplitExpenseTransaction: (payload) =>
+      set((state) => {
+        const cleanSplits = payload.splits
+          .map((split) => ({
+            accountId: split.accountId,
+            amount: Number(split.amount),
+          }))
+          .filter((split) => split.accountId && split.amount > 0);
+        if (!cleanSplits.length) return {};
+        const totalAmount = Number(payload.totalAmount);
+        if (totalAmount <= 0) return {};
+        const assigned = splitTotal(cleanSplits);
+        if (Math.abs(assigned - totalAmount) > 0.01) return {};
+
+        const groupId = makeId("spg");
+        const createdAt = nowISO();
+        const splitTransactions: Transaction[] = cleanSplits.map((split) => ({
+          id: makeId("tx"),
+          amount: split.amount,
+          type: "expense",
+          accountId: split.accountId,
+          splitGroupId: groupId,
+          categoryId: payload.categoryId,
+          subcategoryId: payload.subcategoryId,
+          sourceId: payload.sourceId,
+          date: payload.date,
+          description: payload.description.trim(),
+          motive: payload.motive.trim(),
+          tags: payload.tags,
+          isRecurring: payload.isRecurring,
+          createdAt,
+          updatedAt: createdAt,
+        }));
+        const transactions = [...splitTransactions, ...state.transactions];
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, transactions }),
+          totalLiabilities({ ...state, transactions }),
+        );
+        persist(state, { transactions, netWorthHistory });
+        return { transactions, netWorthHistory };
+      }),
+
+    updateSplitExpenseGroup: (groupId, payload) =>
+      set((state) => {
+        const existing = state.transactions.filter((item) => item.splitGroupId === groupId);
+        if (!existing.length) return {};
+
+        const cleanSplits = payload.splits
+          .map((split) => ({
+            accountId: split.accountId,
+            amount: Number(split.amount),
+          }))
+          .filter((split) => split.accountId && split.amount > 0);
+        if (!cleanSplits.length) return {};
+        const totalAmount = Number(payload.totalAmount);
+        if (totalAmount <= 0) return {};
+        const assigned = splitTotal(cleanSplits);
+        if (Math.abs(assigned - totalAmount) > 0.01) return {};
+
+        const baseCreatedAt = existing
+          .map((item) => item.createdAt)
+          .sort((a, b) => a.localeCompare(b))[0] ?? nowISO();
+        const updateAt = nowISO();
+        const replacements: Transaction[] = cleanSplits.map((split) => ({
+          id: makeId("tx"),
+          amount: split.amount,
+          type: "expense",
+          accountId: split.accountId,
+          splitGroupId: groupId,
+          categoryId: payload.categoryId,
+          subcategoryId: payload.subcategoryId,
+          sourceId: payload.sourceId,
+          date: payload.date,
+          description: payload.description.trim(),
+          motive: payload.motive.trim(),
+          tags: payload.tags,
+          isRecurring: payload.isRecurring,
+          createdAt: baseCreatedAt,
+          updatedAt: updateAt,
+        }));
+
+        const transactions = [
+          ...replacements,
+          ...state.transactions.filter((item) => item.splitGroupId !== groupId),
+        ];
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, transactions }),
+          totalLiabilities({ ...state, transactions }),
+        );
+        persist(state, { transactions, netWorthHistory });
+        return { transactions, netWorthHistory };
+      }),
+
+    deleteSplitExpenseGroup: (groupId) =>
+      set((state) => {
+        const transactions = state.transactions.filter((item) => item.splitGroupId !== groupId);
+        const netWorthHistory = buildNetWorthHistoryPoint(
+          state.netWorthHistory,
+          totalAssetsWithLoans({ ...state, transactions }),
+          totalLiabilities({ ...state, transactions }),
+        );
+        persist(state, { transactions, netWorthHistory });
+        return { transactions, netWorthHistory };
+      }),
+
     updateTransaction: (id, payload) =>
       set((state) => {
         const fallbackAccountId = defaultAccountId(state.accounts);
@@ -291,6 +444,20 @@ export const useBudgetStore = create<BudgetStore>((set) => {
 
     deleteTransaction: (id) =>
       set((state) => {
+        const targetTx = state.transactions.find((item) => item.id === id);
+        if (targetTx?.splitGroupId) {
+          const transactions = state.transactions.filter(
+            (item) => item.splitGroupId !== targetTx.splitGroupId,
+          );
+          const netWorthHistory = buildNetWorthHistoryPoint(
+            state.netWorthHistory,
+            totalAssetsWithLoans({ ...state, transactions }),
+            totalLiabilities({ ...state, transactions }),
+          );
+          persist(state, { transactions, netWorthHistory });
+          return { transactions, netWorthHistory };
+        }
+
         const linkedTransfer = state.accountTransfers.find(
           (item) => item.expenseTransactionId === id || item.incomeTransactionId === id,
         );
